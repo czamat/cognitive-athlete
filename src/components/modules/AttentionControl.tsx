@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useRef, useCallback } from "react";
+import { useState, useEffect, useRef, useCallback, useMemo } from "react";
 import { getAttentionConfig } from "@/lib/difficulty";
 import ModuleShell from "./ModuleShell";
 import type { ModuleResult } from "@/hooks/useWorkout";
@@ -10,6 +10,27 @@ const ARENA_SIZE = 320;
 const DOT_RADIUS = 12;
 const MIN_DISTANCE = DOT_RADIUS * 3.5;
 
+type AttentionVariant = "classic" | "color_tracking" | "distractor_flash";
+
+export const ATTENTION_VARIANTS: AttentionVariant[] = [
+  "classic", "color_tracking", "distractor_flash",
+];
+
+const VARIANT_INFO: Record<AttentionVariant, { title: string; description: string }> = {
+  classic: { title: "Dot Tracking", description: "Track the highlighted targets" },
+  color_tracking: { title: "Color Tracking", description: "Track dots by their starting color" },
+  distractor_flash: { title: "Focus Tracking", description: "Track targets through distracting flashes" },
+};
+
+const DOT_COLORS = [
+  { name: "red", highlight: "bg-red-500", dim: "bg-red-500/40" },
+  { name: "blue", highlight: "bg-blue-500", dim: "bg-blue-500/40" },
+  { name: "green", highlight: "bg-green-500", dim: "bg-green-500/40" },
+  { name: "yellow", highlight: "bg-yellow-400", dim: "bg-yellow-400/40" },
+  { name: "purple", highlight: "bg-purple-500", dim: "bg-purple-500/40" },
+  { name: "pink", highlight: "bg-pink-500", dim: "bg-pink-500/40" },
+];
+
 interface Dot {
   x: number;
   y: number;
@@ -17,6 +38,7 @@ interface Dot {
   vy: number;
   isTarget: boolean;
   id: number;
+  colorIndex?: number;
 }
 
 type Phase = "highlight" | "tracking" | "select" | "feedback";
@@ -24,10 +46,11 @@ type Phase = "highlight" | "tracking" | "select" | "feedback";
 interface AttentionControlProps {
   difficulty: number;
   streak?: number;
+  variant?: AttentionVariant;
   onComplete: (result: ModuleResult) => void;
 }
 
-function spawnDots(count: number, targetCount: number, speed: number): Dot[] {
+function spawnDots(count: number, targetCount: number, speed: number, useColors: boolean): Dot[] {
   const dots: Dot[] = [];
   const padding = DOT_RADIUS + 4;
 
@@ -35,7 +58,6 @@ function spawnDots(count: number, targetCount: number, speed: number): Dot[] {
     let x: number, y: number;
     let attempts = 0;
 
-    // Try to place each dot with minimum spacing from existing dots
     do {
       x = padding + Math.random() * (ARENA_SIZE - padding * 2);
       y = padding + Math.random() * (ARENA_SIZE - padding * 2);
@@ -52,42 +74,81 @@ function spawnDots(count: number, targetCount: number, speed: number): Dot[] {
       vx: (Math.random() - 0.5) * speed * 2,
       vy: (Math.random() - 0.5) * speed * 2,
       isTarget: i < targetCount,
+      colorIndex: useColors ? (i < targetCount ? 0 : 1 + (i % (DOT_COLORS.length - 1))) : undefined,
     });
   }
 
   return dots;
 }
 
-export default function AttentionControl({ difficulty, streak = 0, onComplete }: AttentionControlProps) {
+export default function AttentionControl({ difficulty, streak = 0, variant, onComplete }: AttentionControlProps) {
   const config = getAttentionConfig(difficulty, streak);
+
+  const chosenVariant = useMemo(
+    () => variant || ATTENTION_VARIANTS[Math.floor(Math.random() * ATTENTION_VARIANTS.length)],
+    [variant]
+  );
+  const variantInfo = VARIANT_INFO[chosenVariant];
+  const isColorMode = chosenVariant === "color_tracking";
+  const isFlashMode = chosenVariant === "distractor_flash";
+
   const [round, setRound] = useState(0);
   const [phase, setPhase] = useState<Phase>("highlight");
   const [dots, setDots] = useState<Dot[]>([]);
   const [selected, setSelected] = useState<Set<number>>(new Set());
   const [roundStartTime, setRoundStartTime] = useState(0);
+  const [flashActive, setFlashActive] = useState(false);
+  const [targetColorName, setTargetColorName] = useState("");
 
   const reactionTimes = useRef<number[]>([]);
   const accuracies = useRef<number[]>([]);
   const animFrameRef = useRef<number>(0);
   const dotsRef = useRef<Dot[]>([]);
+  const flashTimers = useRef<ReturnType<typeof setTimeout>[]>([]);
 
   const initDots = useCallback(() => {
-    const newDots = spawnDots(config.totalDots, config.targetDots, config.movementSpeed);
+    const newDots = spawnDots(config.totalDots, config.targetDots, config.movementSpeed, isColorMode);
     dotsRef.current = newDots;
     setDots([...newDots]);
     setSelected(new Set());
+    setFlashActive(false);
+
+    if (isColorMode) {
+      setTargetColorName(DOT_COLORS[0].name);
+    }
+
     setPhase("highlight");
 
     setTimeout(() => {
       setPhase("tracking");
       startAnimation();
+
+      if (isFlashMode) {
+        scheduleFlashes(config.trackingDurationMs);
+      }
+
       setTimeout(() => {
         cancelAnimationFrame(animFrameRef.current);
+        flashTimers.current.forEach(clearTimeout);
+        setFlashActive(false);
         setPhase("select");
         setRoundStartTime(performance.now());
       }, config.trackingDurationMs);
     }, 2000);
-  }, [config]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [config, isColorMode, isFlashMode]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const scheduleFlashes = (duration: number) => {
+    flashTimers.current.forEach(clearTimeout);
+    flashTimers.current = [];
+
+    const flashCount = 2 + Math.floor(difficulty / 3);
+    for (let i = 0; i < flashCount; i++) {
+      const flashTime = Math.random() * (duration - 500);
+      const t1 = setTimeout(() => setFlashActive(true), flashTime);
+      const t2 = setTimeout(() => setFlashActive(false), flashTime + 200);
+      flashTimers.current.push(t1, t2);
+    }
+  };
 
   const startAnimation = useCallback(() => {
     const animate = () => {
@@ -97,7 +158,6 @@ export default function AttentionControl({ difficulty, streak = 0, onComplete }:
         dot.x += dot.vx;
         dot.y += dot.vy;
 
-        // Wall bouncing
         if (dot.x <= DOT_RADIUS || dot.x >= ARENA_SIZE - DOT_RADIUS) {
           dot.vx *= -1;
           dot.x = Math.max(DOT_RADIUS, Math.min(ARENA_SIZE - DOT_RADIUS, dot.x));
@@ -108,7 +168,6 @@ export default function AttentionControl({ difficulty, streak = 0, onComplete }:
         }
       }
 
-      // Repulsion: push overlapping dots apart
       for (let i = 0; i < current.length; i++) {
         for (let j = i + 1; j < current.length; j++) {
           const a = current[i];
@@ -127,7 +186,6 @@ export default function AttentionControl({ difficulty, streak = 0, onComplete }:
             b.x += pushX;
             b.y += pushY;
 
-            // Clamp to arena
             a.x = Math.max(DOT_RADIUS, Math.min(ARENA_SIZE - DOT_RADIUS, a.x));
             a.y = Math.max(DOT_RADIUS, Math.min(ARENA_SIZE - DOT_RADIUS, a.y));
             b.x = Math.max(DOT_RADIUS, Math.min(ARENA_SIZE - DOT_RADIUS, b.x));
@@ -144,7 +202,10 @@ export default function AttentionControl({ difficulty, streak = 0, onComplete }:
 
   useEffect(() => {
     initDots();
-    return () => cancelAnimationFrame(animFrameRef.current);
+    return () => {
+      cancelAnimationFrame(animFrameRef.current);
+      flashTimers.current.forEach(clearTimeout);
+    };
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   const handleDotClick = (dotId: number) => {
@@ -197,37 +258,49 @@ export default function AttentionControl({ difficulty, streak = 0, onComplete }:
   };
 
   const getDotColor = (dot: Dot) => {
-    if (phase === "highlight") {
-      return dot.isTarget ? "bg-accent" : "bg-surface-lighter";
+    if (isColorMode) {
+      const color = DOT_COLORS[dot.colorIndex ?? 0];
+      if (phase === "highlight") return color.highlight;
+      if (phase === "tracking") return color.dim;
+      if (phase === "select") return selected.has(dot.id) ? "bg-primary" : "bg-foreground/40";
+      if (dot.isTarget && selected.has(dot.id)) return "bg-success";
+      if (dot.isTarget && !selected.has(dot.id)) return color.highlight;
+      if (!dot.isTarget && selected.has(dot.id)) return "bg-danger";
+      return "bg-surface-lighter";
     }
-    if (phase === "tracking") {
-      return "bg-foreground/60";
-    }
-    if (phase === "select") {
-      return selected.has(dot.id) ? "bg-primary" : "bg-foreground/60";
-    }
+
+    if (phase === "highlight") return dot.isTarget ? "bg-accent" : "bg-surface-lighter";
+    if (phase === "tracking") return "bg-foreground/60";
+    if (phase === "select") return selected.has(dot.id) ? "bg-primary" : "bg-foreground/60";
     if (dot.isTarget && selected.has(dot.id)) return "bg-success";
     if (dot.isTarget && !selected.has(dot.id)) return "bg-warning";
     if (!dot.isTarget && selected.has(dot.id)) return "bg-danger";
     return "bg-surface-lighter";
   };
 
+  const getHighlightInstruction = () => {
+    if (isColorMode) return `Remember the ${targetColorName} dots`;
+    return "Remember the highlighted dots";
+  };
+
   return (
     <ModuleShell
-      title="Attention Control"
-      description="Track the highlighted targets"
+      title={variantInfo.title}
+      description={variantInfo.description}
       round={round + 1}
       totalRounds={TOTAL_ROUNDS}
     >
       <p className="text-xs text-muted mb-3 text-center">
-        {phase === "highlight" && "Remember the highlighted dots"}
+        {phase === "highlight" && getHighlightInstruction()}
         {phase === "tracking" && "Keep tracking them..."}
         {phase === "select" && `Select ${config.targetDots} target dots`}
         {phase === "feedback" && "Results"}
       </p>
 
       <div
-        className="relative bg-surface rounded-3xl border border-surface-lighter overflow-hidden touch-manipulation"
+        className={`relative rounded-3xl border border-surface-lighter overflow-hidden touch-manipulation transition-colors duration-100 ${
+          flashActive ? "bg-white/10" : "bg-surface"
+        }`}
         style={{ width: ARENA_SIZE, height: ARENA_SIZE }}
       >
         {dots.map((dot) => (
@@ -245,7 +318,6 @@ export default function AttentionControl({ difficulty, streak = 0, onComplete }:
               top: dot.y - DOT_RADIUS,
               transform: phase === "highlight" && dot.isTarget ? "scale(1.3)" : "scale(1)",
               transition: phase === "select" || phase === "feedback" ? "background-color 0.2s" : "none",
-              // Larger touch target via padding, without changing visual size
               padding: phase === "select" ? 8 : 0,
               margin: phase === "select" ? -8 : 0,
             }}

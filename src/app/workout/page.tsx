@@ -1,33 +1,35 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useState, useMemo } from "react";
 import { useRouter } from "next/navigation";
 import { useWorkout } from "@/hooks/useWorkout";
 import { ModuleIntro } from "@/components/modules/ModuleShell";
-import ProcessingSpeed from "@/components/modules/ProcessingSpeed";
-import AttentionControl from "@/components/modules/AttentionControl";
-import WorkingMemory from "@/components/modules/WorkingMemory";
+import ProcessingSpeed, { PROCESSING_SPEED_VARIANTS } from "@/components/modules/ProcessingSpeed";
+import AttentionControl, { ATTENTION_VARIANTS } from "@/components/modules/AttentionControl";
+import WorkingMemory, { MEMORY_VARIANTS } from "@/components/modules/WorkingMemory";
 import Button from "@/components/ui/Button";
 import Card from "@/components/ui/Card";
 import { getUser } from "@/lib/storage";
 
-const MODULE_INFO = [
-  {
-    icon: "⚡",
-    title: "Processing Speed",
-    description: "A symbol will flash briefly. Identify it from the options as fast as you can.",
-  },
-  {
-    icon: "🎯",
-    title: "Attention Control",
-    description: "Track the highlighted dots as they move. Select them when they stop.",
-  },
-  {
-    icon: "🧠",
-    title: "Working Memory",
-    description: "Memorize a sequence of items and recall them in order.",
-  },
-];
+function pickRandom<T>(arr: T[]): T {
+  return arr[Math.floor(Math.random() * arr.length)];
+}
+
+const VARIANT_DESCRIPTIONS: Record<string, { icon: string; title: string; description: string }> = {
+  // Processing Speed
+  symbol_match: { icon: "⚡", title: "Symbol Match", description: "A symbol will flash briefly. Identify it from the options." },
+  number_compare: { icon: "⚡", title: "Number Compare", description: "Two numbers will flash. Pick the larger one quickly." },
+  color_match: { icon: "⚡", title: "Color Match", description: "A color will flash briefly. Pick the matching color." },
+  arrow_direction: { icon: "⚡", title: "Arrow Direction", description: "An arrow will flash. Remember which direction it pointed." },
+  // Attention
+  classic: { icon: "🎯", title: "Dot Tracking", description: "Track the highlighted dots as they move around." },
+  color_tracking: { icon: "🎯", title: "Color Tracking", description: "Track dots by their starting color as they move." },
+  distractor_flash: { icon: "🎯", title: "Focus Tracking", description: "Track targets through distracting screen flashes." },
+  // Memory
+  sequence: { icon: "🧠", title: "Sequence Recall", description: "Memorize a sequence and enter it in order." },
+  reverse: { icon: "🧠", title: "Reverse Recall", description: "Memorize a sequence and enter it backwards." },
+  grid_pattern: { icon: "🧠", title: "Pattern Recall", description: "Memorize a grid pattern and reproduce it." },
+};
 
 export default function WorkoutPage() {
   const router = useRouter();
@@ -38,6 +40,13 @@ export default function WorkoutPage() {
     memory: 1,
   });
   const [streak, setStreak] = useState(0);
+
+  // Pick random variants once per session
+  const variants = useMemo(() => ({
+    processingSpeed: pickRandom(PROCESSING_SPEED_VARIANTS),
+    attention: pickRandom(ATTENTION_VARIANTS),
+    memory: pickRandom(MEMORY_VARIANTS),
+  }), []);
 
   useEffect(() => {
     const user = getUser();
@@ -50,6 +59,12 @@ export default function WorkoutPage() {
     workout.startWorkout();
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
+  const getModuleIntroInfo = (moduleIndex: number) => {
+    const variantKeys = [variants.processingSpeed, variants.attention, variants.memory];
+    const key = variantKeys[moduleIndex];
+    return VARIANT_DESCRIPTIONS[key] || { icon: "🧠", title: "Module", description: "" };
+  };
+
   if (workout.phase === "idle") {
     return (
       <div className="flex-1 flex items-center justify-center">
@@ -59,7 +74,7 @@ export default function WorkoutPage() {
   }
 
   if (workout.phase === "module_intro") {
-    const info = MODULE_INFO[workout.currentModuleIndex];
+    const info = getModuleIntroInfo(workout.currentModuleIndex);
     return (
       <ModuleIntro
         title={info.title}
@@ -76,6 +91,7 @@ export default function WorkoutPage() {
       <ProcessingSpeed
         difficulty={difficulties.processing_speed}
         streak={streak}
+        variant={variants.processingSpeed}
         onComplete={workout.completeModule}
       />
     );
@@ -86,6 +102,7 @@ export default function WorkoutPage() {
       <AttentionControl
         difficulty={difficulties.attention}
         streak={streak}
+        variant={variants.attention}
         onComplete={workout.completeModule}
       />
     );
@@ -96,6 +113,7 @@ export default function WorkoutPage() {
       <WorkingMemory
         difficulty={difficulties.memory}
         streak={streak}
+        variant={variants.memory}
         onComplete={workout.completeModule}
       />
     );
@@ -115,8 +133,8 @@ export default function WorkoutPage() {
       );
     }
 
-    const moduleNames = ["Processing Speed", "Attention Control", "Working Memory"];
     const moduleIcons = ["⚡", "🎯", "🧠"];
+    const variantKeys = [variants.processingSpeed, variants.attention, variants.memory];
 
     return (
       <main className="flex-1 flex flex-col max-w-md mx-auto w-full px-4 py-6 animate-fade-in">
@@ -147,7 +165,9 @@ export default function WorkoutPage() {
             <Card key={i} className="flex items-center gap-3">
               <span className="text-2xl">{moduleIcons[i]}</span>
               <div className="flex-1">
-                <p className="text-sm font-medium">{moduleNames[i]}</p>
+                <p className="text-sm font-medium">
+                  {VARIANT_DESCRIPTIONS[variantKeys[i]]?.title || "Module"}
+                </p>
                 <div className="flex gap-3 text-xs text-muted mt-0.5">
                   <span>Accuracy: {Math.round(mod.accuracy * 100)}%</span>
                   <span>RT: {mod.avgReactionTime}ms</span>

@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useCallback, useRef } from "react";
+import { useState, useEffect, useCallback, useRef, useMemo } from "react";
 import { useTimer } from "@/hooks/useTimer";
 import { getProcessingSpeedConfig } from "@/lib/difficulty";
 import ModuleShell from "./ModuleShell";
@@ -8,7 +8,18 @@ import type { ModuleResult } from "@/hooks/useWorkout";
 
 const TOTAL_ROUNDS = 10;
 
-// Symbol sets of increasing similarity
+// --- Variant definitions ---
+
+type VariantKey = "symbol_match" | "number_compare" | "color_match" | "arrow_direction";
+
+interface VariantRound {
+  prompt: string;
+  displayContent: React.ReactNode;
+  questionText: string;
+  options: { label: React.ReactNode; value: string }[];
+  correctValue: string;
+}
+
 const SYMBOL_SETS = [
   ["▲", "●", "■", "◆", "★", "♦", "♣", "♠"],
   ["1", "2", "3", "4", "5", "6", "7", "8", "9"],
@@ -17,61 +28,177 @@ const SYMBOL_SETS = [
   ["23", "32", "28", "82", "38", "83", "35", "53"],
 ];
 
+const COLORS = [
+  { name: "Red", class: "bg-red-500" },
+  { name: "Blue", class: "bg-blue-500" },
+  { name: "Green", class: "bg-green-500" },
+  { name: "Yellow", class: "bg-yellow-400" },
+  { name: "Purple", class: "bg-purple-500" },
+  { name: "Orange", class: "bg-orange-500" },
+  { name: "Pink", class: "bg-pink-500" },
+  { name: "Cyan", class: "bg-cyan-400" },
+];
+
+const ARROWS = [
+  { label: "↑", direction: "Up" },
+  { label: "↗", direction: "Up-Right" },
+  { label: "→", direction: "Right" },
+  { label: "↘", direction: "Down-Right" },
+  { label: "↓", direction: "Down" },
+  { label: "↙", direction: "Down-Left" },
+  { label: "←", direction: "Left" },
+  { label: "↖", direction: "Up-Left" },
+];
+
+function generateSymbolMatch(similarityLevel: number): VariantRound {
+  const set = SYMBOL_SETS[Math.min(similarityLevel - 1, SYMBOL_SETS.length - 1)];
+  const shuffled = [...set].sort(() => Math.random() - 0.5);
+  const correct = shuffled[0];
+  const distractors = shuffled.slice(1, 4);
+  const options = [correct, ...distractors].sort(() => Math.random() - 0.5);
+
+  return {
+    prompt: "Remember this",
+    displayContent: <span className="text-5xl">{correct}</span>,
+    questionText: "Which symbol was shown?",
+    options: options.map((s) => ({ label: <span className="text-3xl">{s}</span>, value: s })),
+    correctValue: correct,
+  };
+}
+
+function generateNumberCompare(): VariantRound {
+  const a = Math.floor(Math.random() * 900) + 100;
+  let b: number;
+  do { b = Math.floor(Math.random() * 900) + 100; } while (b === a);
+
+  const larger = Math.max(a, b).toString();
+
+  return {
+    prompt: "Which is larger?",
+    displayContent: (
+      <div className="flex items-center gap-4">
+        <span className="text-4xl font-bold">{a}</span>
+        <span className="text-2xl text-muted">vs</span>
+        <span className="text-4xl font-bold">{b}</span>
+      </div>
+    ),
+    questionText: "Tap the larger number",
+    options: [
+      { label: <span className="text-3xl font-bold">{a}</span>, value: a.toString() },
+      { label: <span className="text-3xl font-bold">{b}</span>, value: b.toString() },
+    ],
+    correctValue: larger,
+  };
+}
+
+function generateColorMatch(): VariantRound {
+  const shuffled = [...COLORS].sort(() => Math.random() - 0.5);
+  const correct = shuffled[0];
+  const distractors = shuffled.slice(1, 4);
+  const options = [correct, ...distractors].sort(() => Math.random() - 0.5);
+
+  return {
+    prompt: "Remember this color",
+    displayContent: <div className={`w-20 h-20 rounded-2xl ${correct.class}`} />,
+    questionText: "Which color was shown?",
+    options: options.map((c) => ({
+      label: <div className={`w-12 h-12 rounded-xl ${c.class} mx-auto`} />,
+      value: c.name,
+    })),
+    correctValue: correct.name,
+  };
+}
+
+function generateArrowDirection(): VariantRound {
+  const shuffled = [...ARROWS].sort(() => Math.random() - 0.5);
+  const correct = shuffled[0];
+  const distractors = shuffled.slice(1, 4);
+  const options = [correct, ...distractors].sort(() => Math.random() - 0.5);
+
+  return {
+    prompt: "Which direction?",
+    displayContent: <span className="text-6xl">{correct.label}</span>,
+    questionText: "Which arrow was shown?",
+    options: options.map((a) => ({
+      label: <span className="text-4xl">{a.label}</span>,
+      value: a.direction,
+    })),
+    correctValue: correct.direction,
+  };
+}
+
+const VARIANT_GENERATORS: Record<VariantKey, (similarity: number) => VariantRound> = {
+  symbol_match: generateSymbolMatch,
+  number_compare: () => generateNumberCompare(),
+  color_match: () => generateColorMatch(),
+  arrow_direction: () => generateArrowDirection(),
+};
+
+const VARIANT_TITLES: Record<VariantKey, { title: string; description: string }> = {
+  symbol_match: { title: "Symbol Match", description: "Identify the symbol as fast as you can" },
+  number_compare: { title: "Number Compare", description: "Pick the larger number quickly" },
+  color_match: { title: "Color Match", description: "Remember and match the color" },
+  arrow_direction: { title: "Arrow Direction", description: "Remember which direction the arrow pointed" },
+};
+
+// --- Component ---
+
 interface ProcessingSpeedProps {
   difficulty: number;
   streak?: number;
+  variant?: VariantKey;
   onComplete: (result: ModuleResult) => void;
 }
 
-type Phase = "showing" | "options" | "feedback" | "done";
+type Phase = "showing" | "options" | "feedback";
 
-export default function ProcessingSpeed({ difficulty, streak = 0, onComplete }: ProcessingSpeedProps) {
+export const PROCESSING_SPEED_VARIANTS: VariantKey[] = [
+  "symbol_match", "number_compare", "color_match", "arrow_direction",
+];
+
+export default function ProcessingSpeed({ difficulty, streak = 0, variant, onComplete }: ProcessingSpeedProps) {
   const config = getProcessingSpeedConfig(difficulty, streak);
   const timer = useTimer();
 
+  const chosenVariant = useMemo(
+    () => variant || PROCESSING_SPEED_VARIANTS[Math.floor(Math.random() * PROCESSING_SPEED_VARIANTS.length)],
+    [variant]
+  );
+  const variantInfo = VARIANT_TITLES[chosenVariant];
+  const generate = VARIANT_GENERATORS[chosenVariant];
+
   const [round, setRound] = useState(0);
   const [phase, setPhase] = useState<Phase>("showing");
-  const [target, setTarget] = useState("");
-  const [options, setOptions] = useState<string[]>([]);
-  const [selectedAnswer, setSelectedAnswer] = useState<string | null>(null);
+  const [currentRound, setCurrentRound] = useState<VariantRound>(() => generate(config.similarityLevel));
   const [isCorrect, setIsCorrect] = useState(false);
 
   const reactionTimes = useRef<number[]>([]);
   const correctCount = useRef(0);
 
-  const symbolSet = SYMBOL_SETS[Math.min(config.similarityLevel - 1, SYMBOL_SETS.length - 1)];
-
-  const generateRound = useCallback(() => {
-    const shuffled = [...symbolSet].sort(() => Math.random() - 0.5);
-    const correctSymbol = shuffled[0];
-    const distractors = shuffled.slice(1, config.symbolCount);
-    const allOptions = [correctSymbol, ...distractors].sort(() => Math.random() - 0.5);
-
-    setTarget(correctSymbol);
-    setOptions(allOptions);
-    setSelectedAnswer(null);
+  const startRound = useCallback(() => {
+    const r = generate(config.similarityLevel);
+    setCurrentRound(r);
     setPhase("showing");
 
     setTimeout(() => {
       setPhase("options");
       timer.start();
     }, config.displayTimeMs);
-  }, [symbolSet, config, timer]);
+  }, [generate, config, timer]);
 
   useEffect(() => {
-    generateRound();
+    startRound();
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
-  const handleSelect = (symbol: string) => {
+  const handleSelect = (value: string) => {
     if (phase !== "options") return;
 
     const reactionTime = timer.stop();
     reactionTimes.current.push(reactionTime);
 
-    const correct = symbol === target;
+    const correct = value === currentRound.correctValue;
     if (correct) correctCount.current++;
 
-    setSelectedAnswer(symbol);
     setIsCorrect(correct);
     setPhase("feedback");
 
@@ -91,40 +218,40 @@ export default function ProcessingSpeed({ difficulty, streak = 0, onComplete }: 
         });
       } else {
         setRound(nextRound);
-        generateRound();
+        startRound();
       }
     }, 600);
   };
 
   return (
     <ModuleShell
-      title="Processing Speed"
-      description="Identify the symbol as fast as you can"
+      title={variantInfo.title}
+      description={variantInfo.description}
       round={round + 1}
       totalRounds={TOTAL_ROUNDS}
     >
       {phase === "showing" && (
         <div className="animate-scale-in">
           <div className="w-32 h-32 flex items-center justify-center bg-surface rounded-3xl border-2 border-primary/30">
-            <span className="text-5xl">{target}</span>
+            {currentRound.displayContent}
           </div>
-          <p className="text-xs text-muted text-center mt-3">Remember this</p>
+          <p className="text-xs text-muted text-center mt-3">{currentRound.prompt}</p>
         </div>
       )}
 
       {phase === "options" && (
         <div className="w-full animate-fade-in">
-          <p className="text-sm text-center text-muted mb-6">Which symbol was shown?</p>
+          <p className="text-sm text-center text-muted mb-6">{currentRound.questionText}</p>
           <div className="grid grid-cols-2 gap-3">
-            {options.map((symbol, i) => (
+            {currentRound.options.map((opt, i) => (
               <button
                 key={i}
-                onClick={() => handleSelect(symbol)}
+                onClick={() => handleSelect(opt.value)}
                 className="h-24 flex items-center justify-center bg-surface hover:bg-surface-light
                   active:bg-surface-lighter rounded-2xl border border-surface-lighter
-                  text-3xl transition-colors touch-manipulation select-none"
+                  transition-colors touch-manipulation select-none"
               >
-                {symbol}
+                {opt.label}
               </button>
             ))}
           </div>
@@ -141,7 +268,7 @@ export default function ProcessingSpeed({ difficulty, streak = 0, onComplete }: 
             <span className="text-4xl">{isCorrect ? "✓" : "✗"}</span>
           </div>
           <p className={`text-sm font-medium ${isCorrect ? "text-success" : "text-danger"}`}>
-            {isCorrect ? "Correct!" : `Wrong — it was ${target}`}
+            {isCorrect ? "Correct!" : "Wrong!"}
           </p>
         </div>
       )}
