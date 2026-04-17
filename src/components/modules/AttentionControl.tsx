@@ -7,7 +7,8 @@ import type { ModuleResult } from "@/hooks/useWorkout";
 
 const TOTAL_ROUNDS = 5;
 const ARENA_SIZE = 320;
-const DOT_RADIUS = 14;
+const DOT_RADIUS = 12;
+const MIN_DISTANCE = DOT_RADIUS * 3.5;
 
 interface Dot {
   x: number;
@@ -26,6 +27,37 @@ interface AttentionControlProps {
   onComplete: (result: ModuleResult) => void;
 }
 
+function spawnDots(count: number, targetCount: number, speed: number): Dot[] {
+  const dots: Dot[] = [];
+  const padding = DOT_RADIUS + 4;
+
+  for (let i = 0; i < count; i++) {
+    let x: number, y: number;
+    let attempts = 0;
+
+    // Try to place each dot with minimum spacing from existing dots
+    do {
+      x = padding + Math.random() * (ARENA_SIZE - padding * 2);
+      y = padding + Math.random() * (ARENA_SIZE - padding * 2);
+      attempts++;
+    } while (
+      attempts < 100 &&
+      dots.some((d) => Math.hypot(d.x - x, d.y - y) < MIN_DISTANCE)
+    );
+
+    dots.push({
+      id: i,
+      x,
+      y,
+      vx: (Math.random() - 0.5) * speed * 2,
+      vy: (Math.random() - 0.5) * speed * 2,
+      isTarget: i < targetCount,
+    });
+  }
+
+  return dots;
+}
+
 export default function AttentionControl({ difficulty, streak = 0, onComplete }: AttentionControlProps) {
   const config = getAttentionConfig(difficulty, streak);
   const [round, setRound] = useState(0);
@@ -40,17 +72,7 @@ export default function AttentionControl({ difficulty, streak = 0, onComplete }:
   const dotsRef = useRef<Dot[]>([]);
 
   const initDots = useCallback(() => {
-    const newDots: Dot[] = [];
-    for (let i = 0; i < config.totalDots; i++) {
-      newDots.push({
-        id: i,
-        x: DOT_RADIUS + Math.random() * (ARENA_SIZE - DOT_RADIUS * 2),
-        y: DOT_RADIUS + Math.random() * (ARENA_SIZE - DOT_RADIUS * 2),
-        vx: (Math.random() - 0.5) * config.movementSpeed * 2,
-        vy: (Math.random() - 0.5) * config.movementSpeed * 2,
-        isTarget: i < config.targetDots,
-      });
-    }
+    const newDots = spawnDots(config.totalDots, config.targetDots, config.movementSpeed);
     dotsRef.current = newDots;
     setDots([...newDots]);
     setSelected(new Set());
@@ -70,10 +92,12 @@ export default function AttentionControl({ difficulty, streak = 0, onComplete }:
   const startAnimation = useCallback(() => {
     const animate = () => {
       const current = dotsRef.current;
+
       for (const dot of current) {
         dot.x += dot.vx;
         dot.y += dot.vy;
 
+        // Wall bouncing
         if (dot.x <= DOT_RADIUS || dot.x >= ARENA_SIZE - DOT_RADIUS) {
           dot.vx *= -1;
           dot.x = Math.max(DOT_RADIUS, Math.min(ARENA_SIZE - DOT_RADIUS, dot.x));
@@ -83,6 +107,35 @@ export default function AttentionControl({ difficulty, streak = 0, onComplete }:
           dot.y = Math.max(DOT_RADIUS, Math.min(ARENA_SIZE - DOT_RADIUS, dot.y));
         }
       }
+
+      // Repulsion: push overlapping dots apart
+      for (let i = 0; i < current.length; i++) {
+        for (let j = i + 1; j < current.length; j++) {
+          const a = current[i];
+          const b = current[j];
+          const dx = b.x - a.x;
+          const dy = b.y - a.y;
+          const dist = Math.hypot(dx, dy);
+
+          if (dist < MIN_DISTANCE && dist > 0) {
+            const overlap = MIN_DISTANCE - dist;
+            const pushX = (dx / dist) * overlap * 0.5;
+            const pushY = (dy / dist) * overlap * 0.5;
+
+            a.x -= pushX;
+            a.y -= pushY;
+            b.x += pushX;
+            b.y += pushY;
+
+            // Clamp to arena
+            a.x = Math.max(DOT_RADIUS, Math.min(ARENA_SIZE - DOT_RADIUS, a.x));
+            a.y = Math.max(DOT_RADIUS, Math.min(ARENA_SIZE - DOT_RADIUS, a.y));
+            b.x = Math.max(DOT_RADIUS, Math.min(ARENA_SIZE - DOT_RADIUS, b.x));
+            b.y = Math.max(DOT_RADIUS, Math.min(ARENA_SIZE - DOT_RADIUS, b.y));
+          }
+        }
+      }
+
       setDots([...current]);
       animFrameRef.current = requestAnimationFrame(animate);
     };
@@ -153,7 +206,6 @@ export default function AttentionControl({ difficulty, streak = 0, onComplete }:
     if (phase === "select") {
       return selected.has(dot.id) ? "bg-primary" : "bg-foreground/60";
     }
-    // feedback
     if (dot.isTarget && selected.has(dot.id)) return "bg-success";
     if (dot.isTarget && !selected.has(dot.id)) return "bg-warning";
     if (!dot.isTarget && selected.has(dot.id)) return "bg-danger";
@@ -183,15 +235,19 @@ export default function AttentionControl({ difficulty, streak = 0, onComplete }:
             key={dot.id}
             onClick={() => handleDotClick(dot.id)}
             disabled={phase !== "select"}
-            className={`absolute rounded-full transition-colors duration-200 ${getDotColor(dot)} ${
-              phase === "select" ? "cursor-pointer" : "cursor-default"
+            className={`absolute rounded-full ${getDotColor(dot)} ${
+              phase === "select" ? "cursor-pointer z-10" : "cursor-default"
             }`}
             style={{
               width: DOT_RADIUS * 2,
               height: DOT_RADIUS * 2,
               left: dot.x - DOT_RADIUS,
               top: dot.y - DOT_RADIUS,
-              transform: phase === "highlight" && dot.isTarget ? "scale(1.2)" : "scale(1)",
+              transform: phase === "highlight" && dot.isTarget ? "scale(1.3)" : "scale(1)",
+              transition: phase === "select" || phase === "feedback" ? "background-color 0.2s" : "none",
+              // Larger touch target via padding, without changing visual size
+              padding: phase === "select" ? 8 : 0,
+              margin: phase === "select" ? -8 : 0,
             }}
           />
         ))}
