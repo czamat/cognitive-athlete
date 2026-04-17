@@ -19,13 +19,14 @@ const SYMBOL_SETS = [
 
 interface ProcessingSpeedProps {
   difficulty: number;
+  streak?: number;
   onComplete: (result: ModuleResult) => void;
 }
 
 type Phase = "showing" | "options" | "feedback" | "done";
 
-export default function ProcessingSpeed({ difficulty, onComplete }: ProcessingSpeedProps) {
-  const config = getProcessingSpeedConfig(difficulty);
+export default function ProcessingSpeed({ difficulty, streak = 0, onComplete }: ProcessingSpeedProps) {
+  const config = getProcessingSpeedConfig(difficulty, streak);
   const timer = useTimer();
 
   const [round, setRound] = useState(0);

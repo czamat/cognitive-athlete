@@ -12,6 +12,7 @@ const ITEM_POOL = "0123456789ABCDEFGHJKLMNPQRSTUVWXYZ".split("");
 
 interface WorkingMemoryProps {
   difficulty: number;
+  streak?: number;
   onComplete: (result: ModuleResult) => void;
 }
 
@@ -37,8 +38,8 @@ function generateSequence(length: number): string[] {
   return shuffled.slice(0, length);
 }
 
-export default function WorkingMemory({ difficulty, onComplete }: WorkingMemoryProps) {
-  const config = getMemoryConfig(difficulty);
+export default function WorkingMemory({ difficulty, streak = 0, onComplete }: WorkingMemoryProps) {
+  const config = getMemoryConfig(difficulty, streak);
 
   const [round, setRound] = useState(0);
   const [phase, setPhase] = useState<Phase>("init");

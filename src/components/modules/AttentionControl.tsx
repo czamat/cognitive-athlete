@@ -22,11 +22,12 @@ type Phase = "highlight" | "tracking" | "select" | "feedback";
 
 interface AttentionControlProps {
   difficulty: number;
+  streak?: number;
   onComplete: (result: ModuleResult) => void;
 }
 
-export default function AttentionControl({ difficulty, onComplete }: AttentionControlProps) {
-  const config = getAttentionConfig(difficulty);
+export default function AttentionControl({ difficulty, streak = 0, onComplete }: AttentionControlProps) {
+  const config = getAttentionConfig(difficulty, streak);
   const [round, setRound] = useState(0);
   const [phase, setPhase] = useState<Phase>("highlight");
   const [dots, setDots] = useState<Dot[]>([]);

@@ -14,17 +14,26 @@ export function adjustDifficulty(
   return currentDifficulty;
 }
 
+// Streak adds up to +2 effective difficulty levels, scaling logarithmically:
+// streak 3 → +0.5, streak 7 → +1.0, streak 14 → +1.4, streak 30 → +1.8
+function applyStreakBonus(baseDifficulty: number, streak: number): number {
+  if (streak <= 1) return baseDifficulty;
+  const bonus = Math.min(2, Math.log2(streak) * 0.5);
+  return Math.min(MAX_DIFFICULTY, baseDifficulty + bonus);
+}
+
 export interface ProcessingSpeedConfig {
   displayTimeMs: number;
   symbolCount: number;
   similarityLevel: number;
 }
 
-export function getProcessingSpeedConfig(difficulty: number): ProcessingSpeedConfig {
+export function getProcessingSpeedConfig(difficulty: number, streak: number = 0): ProcessingSpeedConfig {
+  const d = applyStreakBonus(difficulty, streak);
   return {
-    displayTimeMs: Math.max(200, 800 - (difficulty - 1) * 65),
+    displayTimeMs: Math.max(200, 800 - (d - 1) * 65),
     symbolCount: 4,
-    similarityLevel: Math.min(difficulty, 5),
+    similarityLevel: Math.min(Math.round(d), 5),
   };
 }
 
@@ -35,12 +44,13 @@ export interface AttentionConfig {
   trackingDurationMs: number;
 }
 
-export function getAttentionConfig(difficulty: number): AttentionConfig {
+export function getAttentionConfig(difficulty: number, streak: number = 0): AttentionConfig {
+  const d = applyStreakBonus(difficulty, streak);
   return {
-    totalDots: 6 + Math.floor(difficulty * 0.8),
-    targetDots: 2 + Math.floor(difficulty * 0.3),
-    movementSpeed: 1 + difficulty * 0.4,
-    trackingDurationMs: 3000 + difficulty * 300,
+    totalDots: 6 + Math.floor(d * 0.8),
+    targetDots: 2 + Math.floor(d * 0.3),
+    movementSpeed: 1 + d * 0.4,
+    trackingDurationMs: 3000 + Math.round(d * 300),
   };
 }
 
@@ -51,11 +61,12 @@ export interface MemoryConfig {
   hasDualTask: boolean;
 }
 
-export function getMemoryConfig(difficulty: number): MemoryConfig {
+export function getMemoryConfig(difficulty: number, streak: number = 0): MemoryConfig {
+  const d = applyStreakBonus(difficulty, streak);
   return {
-    sequenceLength: 3 + Math.floor(difficulty * 0.5),
-    displayTimePerItemMs: Math.max(400, 1000 - difficulty * 60),
+    sequenceLength: 3 + Math.floor(d * 0.5),
+    displayTimePerItemMs: Math.max(400, 1000 - Math.round(d * 60)),
     delayMs: 2000,
-    hasDualTask: difficulty >= 5,
+    hasDualTask: d >= 5,
   };
 }

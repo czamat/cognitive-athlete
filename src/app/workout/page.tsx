@@ -37,6 +37,7 @@ export default function WorkoutPage() {
     attention: 1,
     memory: 1,
   });
+  const [streak, setStreak] = useState(0);
 
   useEffect(() => {
     const user = getUser();
@@ -45,6 +46,7 @@ export default function WorkoutPage() {
       attention: user.attentionDifficulty,
       memory: user.memoryDifficulty,
     });
+    setStreak(user.currentStreak);
     workout.startWorkout();
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -73,6 +75,7 @@ export default function WorkoutPage() {
     return (
       <ProcessingSpeed
         difficulty={difficulties.processing_speed}
+        streak={streak}
         onComplete={workout.completeModule}
       />
     );
@@ -82,6 +85,7 @@ export default function WorkoutPage() {
     return (
       <AttentionControl
         difficulty={difficulties.attention}
+        streak={streak}
         onComplete={workout.completeModule}
       />
     );
@@ -91,6 +95,7 @@ export default function WorkoutPage() {
     return (
       <WorkingMemory
         difficulty={difficulties.memory}
+        streak={streak}
         onComplete={workout.completeModule}
       />
     );
