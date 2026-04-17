@@ -13,7 +13,7 @@ const MIN_DISTANCE = DOT_RADIUS * 3.5;
 type AttentionVariant = "classic" | "color_tracking" | "distractor_flash";
 
 export const ATTENTION_VARIANTS: AttentionVariant[] = [
-  "classic", "color_tracking", "distractor_flash",
+  "classic", "distractor_flash",
 ];
 
 const VARIANT_INFO: Record<AttentionVariant, { title: string; description: string }> = {

@@ -23,7 +23,6 @@ const VARIANT_DESCRIPTIONS: Record<string, { icon: string; title: string; descri
   arrow_direction: { icon: "⚡", title: "Arrow Direction", description: "An arrow will flash. Remember which direction it pointed." },
   // Attention
   classic: { icon: "🎯", title: "Dot Tracking", description: "Track the highlighted dots as they move around." },
-  color_tracking: { icon: "🎯", title: "Color Tracking", description: "Track dots by their starting color as they move." },
   distractor_flash: { icon: "🎯", title: "Focus Tracking", description: "Track targets through distracting screen flashes." },
   // Memory
   sequence: { icon: "🧠", title: "Sequence Recall", description: "Memorize a sequence and enter it in order." },
