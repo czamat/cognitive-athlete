@@ -124,15 +124,18 @@ export function saveSession(modules: SaveSessionInput[]): SaveSessionResult {
   const xpGain = calculateXpGain(cognitiveScore);
   user.totalXp += xpGain;
 
-  const today = new Date().toISOString().split("T")[0];
+  const now = new Date();
+  const today = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}`;
   let newStreak = 1;
   if (user.lastSessionDate) {
-    const last = new Date(user.lastSessionDate);
-    const diffDays = Math.floor((Date.now() - last.getTime()) / 86400000);
+    const todayDate = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+    const [y, m, d] = user.lastSessionDate.split("-").map(Number);
+    const lastDate = new Date(y, m - 1, d);
+    const diffDays = Math.round((todayDate.getTime() - lastDate.getTime()) / 86400000);
     if (diffDays === 1) {
       newStreak = user.currentStreak + 1;
     } else if (diffDays === 0) {
-      newStreak = user.currentStreak;
+      newStreak = Math.max(1, user.currentStreak);
     }
   }
   user.currentStreak = newStreak;

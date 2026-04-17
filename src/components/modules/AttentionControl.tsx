@@ -104,51 +104,19 @@ export default function AttentionControl({ difficulty, streak = 0, variant, onCo
   const accuracies = useRef<number[]>([]);
   const animFrameRef = useRef<number>(0);
   const dotsRef = useRef<Dot[]>([]);
-  const flashTimers = useRef<ReturnType<typeof setTimeout>[]>([]);
+  const timersRef = useRef<ReturnType<typeof setTimeout>[]>([]);
 
-  const initDots = useCallback(() => {
-    const newDots = spawnDots(config.totalDots, config.targetDots, config.movementSpeed, isColorMode);
-    dotsRef.current = newDots;
-    setDots([...newDots]);
-    setSelected(new Set());
-    setFlashActive(false);
+  const clearAllTimers = useCallback(() => {
+    cancelAnimationFrame(animFrameRef.current);
+    timersRef.current.forEach(clearTimeout);
+    timersRef.current = [];
+  }, []);
 
-    if (isColorMode) {
-      setTargetColorName(DOT_COLORS[0].name);
-    }
-
-    setPhase("highlight");
-
-    setTimeout(() => {
-      setPhase("tracking");
-      startAnimation();
-
-      if (isFlashMode) {
-        scheduleFlashes(config.trackingDurationMs);
-      }
-
-      setTimeout(() => {
-        cancelAnimationFrame(animFrameRef.current);
-        flashTimers.current.forEach(clearTimeout);
-        setFlashActive(false);
-        setPhase("select");
-        setRoundStartTime(performance.now());
-      }, config.trackingDurationMs);
-    }, 2000);
-  }, [config, isColorMode, isFlashMode]); // eslint-disable-line react-hooks/exhaustive-deps
-
-  const scheduleFlashes = (duration: number) => {
-    flashTimers.current.forEach(clearTimeout);
-    flashTimers.current = [];
-
-    const flashCount = 2 + Math.floor(difficulty / 3);
-    for (let i = 0; i < flashCount; i++) {
-      const flashTime = Math.random() * (duration - 500);
-      const t1 = setTimeout(() => setFlashActive(true), flashTime);
-      const t2 = setTimeout(() => setFlashActive(false), flashTime + 200);
-      flashTimers.current.push(t1, t2);
-    }
-  };
+  const addTimer = useCallback((fn: () => void, delay: number) => {
+    const id = setTimeout(fn, delay);
+    timersRef.current.push(id);
+    return id;
+  }, []);
 
   const startAnimation = useCallback(() => {
     const animate = () => {
@@ -200,12 +168,46 @@ export default function AttentionControl({ difficulty, streak = 0, variant, onCo
     animFrameRef.current = requestAnimationFrame(animate);
   }, []);
 
+  const initDots = useCallback(() => {
+    clearAllTimers();
+
+    const newDots = spawnDots(config.totalDots, config.targetDots, config.movementSpeed, isColorMode);
+    dotsRef.current = newDots;
+    setDots([...newDots]);
+    setSelected(new Set());
+    setFlashActive(false);
+
+    if (isColorMode) {
+      setTargetColorName(DOT_COLORS[0].name);
+    }
+
+    setPhase("highlight");
+
+    addTimer(() => {
+      setPhase("tracking");
+      startAnimation();
+
+      if (isFlashMode) {
+        const flashCount = 2 + Math.floor(difficulty / 3);
+        for (let i = 0; i < flashCount; i++) {
+          const flashTime = Math.random() * (config.trackingDurationMs - 500);
+          addTimer(() => setFlashActive(true), flashTime);
+          addTimer(() => setFlashActive(false), flashTime + 200);
+        }
+      }
+
+      addTimer(() => {
+        cancelAnimationFrame(animFrameRef.current);
+        setFlashActive(false);
+        setPhase("select");
+        setRoundStartTime(performance.now());
+      }, config.trackingDurationMs);
+    }, 2000);
+  }, [config, isColorMode, isFlashMode, difficulty, clearAllTimers, addTimer, startAnimation]);
+
   useEffect(() => {
     initDots();
-    return () => {
-      cancelAnimationFrame(animFrameRef.current);
-      flashTimers.current.forEach(clearTimeout);
-    };
+    return clearAllTimers;
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   const handleDotClick = (dotId: number) => {
@@ -234,7 +236,7 @@ export default function AttentionControl({ difficulty, streak = 0, variant, onCo
 
       setPhase("feedback");
 
-      setTimeout(() => {
+      addTimer(() => {
         const nextRound = round + 1;
         if (nextRound >= TOTAL_ROUNDS) {
           const avgReactionTime =

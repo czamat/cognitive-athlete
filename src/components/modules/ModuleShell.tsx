@@ -9,7 +9,6 @@ interface ModuleShellProps {
   round: number;
   totalRounds: number;
   children: React.ReactNode;
-  onComplete?: () => void;
 }
 
 export default function ModuleShell({

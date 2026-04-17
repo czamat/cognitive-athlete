@@ -8,8 +8,6 @@ import type { ModuleResult } from "@/hooks/useWorkout";
 
 const TOTAL_ROUNDS = 10;
 
-// --- Variant definitions ---
-
 type VariantKey = "symbol_match" | "number_compare" | "color_match" | "arrow_direction";
 
 interface VariantRound {
@@ -141,8 +139,6 @@ const VARIANT_TITLES: Record<VariantKey, { title: string; description: string }>
   arrow_direction: { title: "Arrow Direction", description: "Remember which direction the arrow pointed" },
 };
 
-// --- Component ---
-
 interface ProcessingSpeedProps {
   difficulty: number;
   streak?: number;
@@ -172,22 +168,36 @@ export default function ProcessingSpeed({ difficulty, streak = 0, variant, onCom
   const [currentRound, setCurrentRound] = useState<VariantRound>(() => generate(config.similarityLevel));
   const [isCorrect, setIsCorrect] = useState(false);
 
+  const roundRef = useRef(0);
   const reactionTimes = useRef<number[]>([]);
   const correctCount = useRef(0);
+  const timersRef = useRef<ReturnType<typeof setTimeout>[]>([]);
+
+  const clearTimers = useCallback(() => {
+    timersRef.current.forEach(clearTimeout);
+    timersRef.current = [];
+  }, []);
+
+  const addTimer = useCallback((fn: () => void, delay: number) => {
+    const id = setTimeout(fn, delay);
+    timersRef.current.push(id);
+    return id;
+  }, []);
 
   const startRound = useCallback(() => {
     const r = generate(config.similarityLevel);
     setCurrentRound(r);
     setPhase("showing");
 
-    setTimeout(() => {
+    addTimer(() => {
       setPhase("options");
       timer.start();
     }, config.displayTimeMs);
-  }, [generate, config, timer]);
+  }, [generate, config, timer, addTimer]);
 
   useEffect(() => {
     startRound();
+    return clearTimers;
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   const handleSelect = (value: string) => {
@@ -202,8 +212,8 @@ export default function ProcessingSpeed({ difficulty, streak = 0, variant, onCom
     setIsCorrect(correct);
     setPhase("feedback");
 
-    setTimeout(() => {
-      const nextRound = round + 1;
+    addTimer(() => {
+      const nextRound = roundRef.current + 1;
       if (nextRound >= TOTAL_ROUNDS) {
         const avgReactionTime =
           reactionTimes.current.reduce((a, b) => a + b, 0) / reactionTimes.current.length;
@@ -217,6 +227,7 @@ export default function ProcessingSpeed({ difficulty, streak = 0, variant, onCom
           roundsCompleted: TOTAL_ROUNDS,
         });
       } else {
+        roundRef.current = nextRound;
         setRound(nextRound);
         startRound();
       }
