@@ -15,7 +15,7 @@ interface WorkingMemoryProps {
   onComplete: (result: ModuleResult) => void;
 }
 
-type Phase = "showing" | "delay" | "dual_task" | "recall" | "feedback";
+type Phase = "init" | "showing" | "delay" | "dual_task" | "recall" | "feedback";
 
 function generateMathProblem(): { question: string; answer: number } {
   const a = Math.floor(Math.random() * 12) + 2;
@@ -32,12 +32,17 @@ function generateMathProblem(): { question: string; answer: number } {
   return { question: `${a} ${op} ${b} = ?`, answer };
 }
 
+function generateSequence(length: number): string[] {
+  const shuffled = [...ITEM_POOL].sort(() => Math.random() - 0.5);
+  return shuffled.slice(0, length);
+}
+
 export default function WorkingMemory({ difficulty, onComplete }: WorkingMemoryProps) {
   const config = getMemoryConfig(difficulty);
 
   const [round, setRound] = useState(0);
-  const [phase, setPhase] = useState<Phase>("showing");
-  const [sequence, setSequence] = useState<string[]>([]);
+  const [phase, setPhase] = useState<Phase>("init");
+  const [sequence, setSequence] = useState<string[]>(() => generateSequence(config.sequenceLength));
   const [currentShowIndex, setCurrentShowIndex] = useState(0);
   const [userInput, setUserInput] = useState<string[]>([]);
   const [currentInputIndex, setCurrentInputIndex] = useState(0);
@@ -45,42 +50,33 @@ export default function WorkingMemory({ difficulty, onComplete }: WorkingMemoryP
   const [mathProblem, setMathProblem] = useState<{ question: string; answer: number } | null>(null);
   const [mathInput, setMathInput] = useState("");
   const [roundStartTime, setRoundStartTime] = useState(0);
+  const [stableOptions, setStableOptions] = useState<string[]>([]);
 
   const reactionTimes = useRef<number[]>([]);
   const accuracies = useRef<number[]>([]);
 
-  const generateSequence = useCallback(() => {
-    const shuffled = [...ITEM_POOL].sort(() => Math.random() - 0.5);
-    return shuffled.slice(0, config.sequenceLength);
-  }, [config.sequenceLength]);
-
-  const startRound = useCallback(() => {
-    const seq = generateSequence();
-    setSequence(seq);
-    setCurrentShowIndex(0);
-    setUserInput([]);
-    setCurrentInputIndex(0);
-    setMathInput("");
-    setPhase("showing");
-  }, [generateSequence]);
-
+  // Start showing on mount and after each new round
   useEffect(() => {
-    startRound();
-  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+    if (phase === "init" && sequence.length > 0) {
+      setPhase("showing");
+    }
+  }, [phase, sequence]);
 
-  // Animate sequence display
+  // Animate sequence display one item at a time
   useEffect(() => {
-    if (phase !== "showing") return;
+    if (phase !== "showing" || sequence.length === 0) return;
+
     if (currentShowIndex >= sequence.length) {
       if (config.hasDualTask) {
         setMathProblem(generateMathProblem());
         setPhase("dual_task");
       } else {
         setPhase("delay");
-        setTimeout(() => {
+        const timer = setTimeout(() => {
           setPhase("recall");
           setRoundStartTime(performance.now());
         }, config.delayMs);
+        return () => clearTimeout(timer);
       }
       return;
     }
@@ -91,6 +87,27 @@ export default function WorkingMemory({ difficulty, onComplete }: WorkingMemoryP
 
     return () => clearTimeout(timer);
   }, [phase, currentShowIndex, sequence.length, config]);
+
+  // Generate stable recall options when entering recall phase
+  useEffect(() => {
+    if (phase === "recall" && stableOptions.length === 0) {
+      const extras = ITEM_POOL.filter((x) => !sequence.includes(x))
+        .sort(() => Math.random() - 0.5)
+        .slice(0, Math.max(4, 9 - sequence.length));
+      setStableOptions([...sequence, ...extras].sort(() => Math.random() - 0.5));
+    }
+  }, [phase, sequence, stableOptions.length]);
+
+  const startNextRound = useCallback(() => {
+    const seq = generateSequence(config.sequenceLength);
+    setSequence(seq);
+    setCurrentShowIndex(0);
+    setUserInput([]);
+    setCurrentInputIndex(0);
+    setMathInput("");
+    setStableOptions([]);
+    setPhase("init");
+  }, [config.sequenceLength]);
 
   const handleDualTaskSubmit = () => {
     setPhase("recall");
@@ -134,7 +151,7 @@ export default function WorkingMemory({ difficulty, onComplete }: WorkingMemoryP
           });
         } else {
           setRound(nextRound);
-          startRound();
+          startNextRound();
         }
       }, 2000);
     }
@@ -147,25 +164,6 @@ export default function WorkingMemory({ difficulty, onComplete }: WorkingMemoryP
     }
   };
 
-  // Unique items for the input grid (the sequence items + some extras)
-  const inputOptions = (() => {
-    const extras = ITEM_POOL.filter((x) => !sequence.includes(x))
-      .sort(() => Math.random() - 0.5)
-      .slice(0, Math.max(4, 9 - sequence.length));
-    return [...sequence, ...extras].sort(() => Math.random() - 0.5);
-  })();
-
-  // Memoize input options so they don't reshuffle on every render
-  const [stableOptions, setStableOptions] = useState<string[]>([]);
-  useEffect(() => {
-    if (phase === "recall" && stableOptions.length === 0) {
-      setStableOptions(inputOptions);
-    }
-    if (phase === "showing") {
-      setStableOptions([]);
-    }
-  }, [phase]); // eslint-disable-line react-hooks/exhaustive-deps
-
   return (
     <ModuleShell
       title="Working Memory"
@@ -173,11 +171,11 @@ export default function WorkingMemory({ difficulty, onComplete }: WorkingMemoryP
       round={round + 1}
       totalRounds={TOTAL_ROUNDS}
     >
-      {phase === "showing" && (
+      {(phase === "init" || phase === "showing") && (
         <div className="text-center animate-scale-in">
           <p className="text-xs text-muted mb-4">Memorize the sequence</p>
           <div className="w-28 h-28 flex items-center justify-center bg-surface rounded-3xl border-2 border-primary/30 mx-auto">
-            {currentShowIndex < sequence.length && (
+            {phase === "showing" && currentShowIndex < sequence.length && (
               <span className="text-4xl font-bold text-primary animate-scale-in" key={currentShowIndex}>
                 {sequence[currentShowIndex]}
               </span>
@@ -188,7 +186,7 @@ export default function WorkingMemory({ difficulty, onComplete }: WorkingMemoryP
               <div
                 key={i}
                 className={`w-2 h-2 rounded-full ${
-                  i <= currentShowIndex ? "bg-primary" : "bg-surface-lighter"
+                  phase === "showing" && i <= currentShowIndex ? "bg-primary" : "bg-surface-lighter"
                 }`}
               />
             ))}
@@ -224,7 +222,6 @@ export default function WorkingMemory({ difficulty, onComplete }: WorkingMemoryP
             Enter the sequence ({userInput.length}/{sequence.length})
           </p>
 
-          {/* User input display */}
           <div className="flex justify-center gap-2 mb-6">
             {sequence.map((_, i) => (
               <div
@@ -242,7 +239,6 @@ export default function WorkingMemory({ difficulty, onComplete }: WorkingMemoryP
             ))}
           </div>
 
-          {/* Input grid */}
           <div className="grid grid-cols-4 gap-2 mb-3">
             {stableOptions.map((item) => (
               <button
