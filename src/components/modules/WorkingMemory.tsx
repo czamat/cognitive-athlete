@@ -67,16 +67,15 @@ function generateGridPattern(count: number): number[] {
 }
 
 // ---- Sequence / Reverse Recall ----
+// This component is rendered with a `key={round}` so it fully remounts each round.
 
 function SequenceRecall({
   config,
   isReverse,
-  round,
   onRoundComplete,
 }: {
   config: ReturnType<typeof getMemoryConfig>;
   isReverse: boolean;
-  round: number;
   onRoundComplete: (accuracy: number, reactionTime: number) => void;
 }) {
   const [phase, setPhase] = useState<Phase>("showing");
@@ -86,39 +85,28 @@ function SequenceRecall({
   const [mathInput, setMathInput] = useState("");
   const [roundStartTime, setRoundStartTime] = useState(0);
 
-  // Store round data in state (not refs) so React re-renders with correct values
-  const [sequence, setSequence] = useState<string[]>(() => generateSequence(config.sequenceLength));
-  const [recallOptions, setRecallOptions] = useState<string[]>(() => buildRecallOptions(sequence));
-  const [expected, setExpected] = useState<string[]>(() =>
-    isReverse ? [...sequence].reverse() : sequence
+  const [sequence] = useState<string[]>(() => generateSequence(config.sequenceLength));
+  const [recallOptions] = useState<string[]>(() => buildRecallOptions(sequence));
+  const expected = useMemo(
+    () => (isReverse ? [...sequence].reverse() : [...sequence]),
+    [sequence, isReverse]
   );
 
-  // Track which round we last initialized for, to avoid re-init on same round
-  const lastInitRound = useRef(-1);
-
-  const initRound = useCallback(() => {
-    const seq = generateSequence(config.sequenceLength);
-    const opts = buildRecallOptions(seq);
-    const exp = isReverse ? [...seq].reverse() : seq;
-    setSequence(seq);
-    setRecallOptions(opts);
-    setExpected(exp);
-    setCurrentShowIndex(0);
-    setUserInput([]);
-    setMathInput("");
-    setPhase("showing");
-  }, [config.sequenceLength, isReverse]);
+  const completedRef = useRef(false);
+  const timersRef = useRef<ReturnType<typeof setTimeout>[]>([]);
 
   useEffect(() => {
-    if (lastInitRound.current !== round) {
-      lastInitRound.current = round;
-      if (round > 0) {
-        initRound();
-      }
-    }
-  }, [round, initRound]);
+    return () => {
+      timersRef.current.forEach(clearTimeout);
+    };
+  }, []);
 
-  // Animate: show items one at a time, then transition
+  const addTimer = useCallback((fn: () => void, delay: number) => {
+    const id = setTimeout(fn, delay);
+    timersRef.current.push(id);
+    return id;
+  }, []);
+
   useEffect(() => {
     if (phase !== "showing" || sequence.length === 0) return;
 
@@ -128,7 +116,7 @@ function SequenceRecall({
         setPhase("dual_task");
       } else {
         setPhase("delay");
-        const timer = setTimeout(() => {
+        const timer = addTimer(() => {
           setPhase("recall");
           setRoundStartTime(performance.now());
         }, config.delayMs);
@@ -137,12 +125,18 @@ function SequenceRecall({
       return;
     }
 
-    const timer = setTimeout(() => {
+    const timer = addTimer(() => {
       setCurrentShowIndex((prev) => prev + 1);
     }, config.displayTimePerItemMs);
 
     return () => clearTimeout(timer);
-  }, [phase, currentShowIndex, sequence, config]);
+  }, [phase, currentShowIndex, sequence, config, addTimer]);
+
+  const finishRound = useCallback((accuracy: number, reactionTime: number) => {
+    if (completedRef.current) return;
+    completedRef.current = true;
+    onRoundComplete(accuracy, reactionTime);
+  }, [onRoundComplete]);
 
   const handleRecallInput = (item: string) => {
     if (phase !== "recall" || userInput.length >= expected.length) return;
@@ -157,26 +151,26 @@ function SequenceRecall({
         if (newInput[i] === expected[i]) correct++;
       }
       setPhase("feedback");
-      setTimeout(() => onRoundComplete(correct / expected.length, reactionTime), 2000);
+      addTimer(() => finishRound(correct / expected.length, reactionTime), 2000);
     }
   };
 
   const handleSkip = () => {
     setPhase("feedback");
     setUserInput(Array(expected.length).fill("?"));
-    setTimeout(() => onRoundComplete(0, 10000), 1500);
+    addTimer(() => finishRound(0, 10000), 1500);
   };
 
   return (
     <>
       {phase === "showing" && (
-        <div className="text-center animate-scale-in" key={`show-${round}`}>
+        <div className="text-center animate-scale-in">
           <p className="text-xs text-muted mb-4">
             Memorize the sequence{isReverse ? " (you'll enter it backwards)" : ""}
           </p>
           <div className="w-28 h-28 flex items-center justify-center bg-surface rounded-3xl border-2 border-primary/30 mx-auto">
             {currentShowIndex < sequence.length && (
-              <span className="text-4xl font-bold text-primary animate-scale-in" key={`item-${round}-${currentShowIndex}`}>
+              <span className="text-4xl font-bold text-primary animate-scale-in" key={currentShowIndex}>
                 {sequence[currentShowIndex]}
               </span>
             )}
@@ -306,56 +300,62 @@ function SequenceRecall({
 }
 
 // ---- Grid Pattern Recall ----
+// This component is rendered with a `key={round}` so it fully remounts each round.
 
 function GridPatternRecall({
   config,
-  round,
   onRoundComplete,
 }: {
   config: ReturnType<typeof getMemoryConfig>;
-  round: number;
   onRoundComplete: (accuracy: number, reactionTime: number) => void;
 }) {
   const cellCount = Math.min(config.sequenceLength + 1, GRID_SIZE * GRID_SIZE - 2);
 
   const [phase, setPhase] = useState<Phase>("showing");
-  const [pattern, setPattern] = useState<number[]>(() => generateGridPattern(cellCount));
+  const [pattern] = useState<number[]>(() => generateGridPattern(cellCount));
   const [showIndex, setShowIndex] = useState(0);
   const [userSelected, setUserSelected] = useState<Set<number>>(new Set());
   const [roundStartTime, setRoundStartTime] = useState(0);
 
-  const lastInitRound = useRef(-1);
+  const completedRef = useRef(false);
+  const timersRef = useRef<ReturnType<typeof setTimeout>[]>([]);
 
   useEffect(() => {
-    if (lastInitRound.current !== round) {
-      lastInitRound.current = round;
-      if (round > 0) {
-        setPattern(generateGridPattern(cellCount));
-        setShowIndex(0);
-        setUserSelected(new Set());
-        setPhase("showing");
-      }
-    }
-  }, [round, cellCount]);
+    return () => {
+      timersRef.current.forEach(clearTimeout);
+    };
+  }, []);
+
+  const addTimer = useCallback((fn: () => void, delay: number) => {
+    const id = setTimeout(fn, delay);
+    timersRef.current.push(id);
+    return id;
+  }, []);
 
   useEffect(() => {
     if (phase !== "showing" || pattern.length === 0) return;
 
     if (showIndex >= pattern.length) {
       setPhase("delay");
-      const timer = setTimeout(() => {
+      const timer = addTimer(() => {
         setPhase("recall");
         setRoundStartTime(performance.now());
       }, config.delayMs);
       return () => clearTimeout(timer);
     }
 
-    const timer = setTimeout(() => {
+    const timer = addTimer(() => {
       setShowIndex((prev) => prev + 1);
     }, config.displayTimePerItemMs);
 
     return () => clearTimeout(timer);
-  }, [phase, showIndex, pattern, config]);
+  }, [phase, showIndex, pattern, config, addTimer]);
+
+  const finishRound = useCallback((accuracy: number, reactionTime: number) => {
+    if (completedRef.current) return;
+    completedRef.current = true;
+    onRoundComplete(accuracy, reactionTime);
+  }, [onRoundComplete]);
 
   const handleCellClick = (index: number) => {
     if (phase !== "recall") return;
@@ -376,12 +376,12 @@ function GridPatternRecall({
       if (pattern.includes(idx)) correct++;
     }
     setPhase("feedback");
-    setTimeout(() => onRoundComplete(pattern.length > 0 ? correct / pattern.length : 0, reactionTime), 2000);
+    addTimer(() => finishRound(pattern.length > 0 ? correct / pattern.length : 0, reactionTime), 2000);
   };
 
   const handleSkip = () => {
     setPhase("feedback");
-    setTimeout(() => onRoundComplete(0, 10000), 1500);
+    addTimer(() => finishRound(0, 10000), 1500);
   };
 
   const getCellClass = (index: number) => {
@@ -473,32 +473,32 @@ export default function WorkingMemory({ difficulty, streak = 0, variant, onCompl
   const [round, setRound] = useState(0);
   const reactionTimes = useRef<number[]>([]);
   const accuracies = useRef<number[]>([]);
+  const finishedRef = useRef(false);
 
   const handleRoundComplete = useCallback((accuracy: number, reactionTime: number) => {
     reactionTimes.current.push(reactionTime);
     accuracies.current.push(accuracy);
 
-    setRound((prev) => {
-      const nextRound = prev + 1;
-      if (nextRound >= TOTAL_ROUNDS) {
-        const avgReactionTime =
-          reactionTimes.current.reduce((a, b) => a + b, 0) / reactionTimes.current.length;
-        const avgAccuracy =
-          accuracies.current.reduce((a, b) => a + b, 0) / accuracies.current.length;
+    const nextRound = reactionTimes.current.length;
+    if (nextRound >= TOTAL_ROUNDS) {
+      if (finishedRef.current) return;
+      finishedRef.current = true;
 
-        setTimeout(() => {
-          onComplete({
-            moduleType: "memory",
-            avgReactionTime: Math.round(avgReactionTime),
-            accuracy: avgAccuracy,
-            difficultyLevel: difficulty,
-            roundsCompleted: TOTAL_ROUNDS,
-          });
-        }, 0);
-        return prev;
-      }
-      return nextRound;
-    });
+      const avgReactionTime =
+        reactionTimes.current.reduce((a, b) => a + b, 0) / reactionTimes.current.length;
+      const avgAccuracy =
+        accuracies.current.reduce((a, b) => a + b, 0) / accuracies.current.length;
+
+      onComplete({
+        moduleType: "memory",
+        avgReactionTime: Math.round(avgReactionTime),
+        accuracy: avgAccuracy,
+        difficultyLevel: difficulty,
+        roundsCompleted: TOTAL_ROUNDS,
+      });
+    } else {
+      setRound(nextRound);
+    }
   }, [difficulty, onComplete]);
 
   return (
@@ -510,15 +510,15 @@ export default function WorkingMemory({ difficulty, streak = 0, variant, onCompl
     >
       {chosenVariant === "grid_pattern" ? (
         <GridPatternRecall
+          key={round}
           config={config}
-          round={round}
           onRoundComplete={handleRoundComplete}
         />
       ) : (
         <SequenceRecall
+          key={round}
           config={config}
           isReverse={chosenVariant === "reverse"}
-          round={round}
           onRoundComplete={handleRoundComplete}
         />
       )}
