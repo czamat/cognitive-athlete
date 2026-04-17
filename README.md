@@ -31,7 +31,7 @@ Open [http://localhost:3000](http://localhost:3000).
 
 ## Deploy to Vercel
 
-[![Deploy with Vercel](https://vercel.com/button)](https://vercel.com/new/clone?repository-url=https://github.com/YOUR_USERNAME/cognitive-athlete)
+[![Deploy with Vercel](https://vercel.com/button)](https://vercel.com/new/clone?repository-url=https://github.com/czamat/cognitive-athlete)
 
 Or connect your GitHub repo to Vercel — zero config needed.
 
