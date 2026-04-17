@@ -48,11 +48,11 @@ function generateSequence(length: number): string[] {
   return shuffled.slice(0, length);
 }
 
-function buildRecallOptions(sequence: string[]): string[] {
-  const extras = ITEM_POOL.filter((x) => !sequence.includes(x))
+function buildRecallOptions(seq: string[]): string[] {
+  const extras = ITEM_POOL.filter((x) => !seq.includes(x))
     .sort(() => Math.random() - 0.5)
-    .slice(0, Math.max(4, 9 - sequence.length));
-  return [...sequence, ...extras].sort(() => Math.random() - 0.5);
+    .slice(0, Math.max(4, 9 - seq.length));
+  return [...seq, ...extras].sort(() => Math.random() - 0.5);
 }
 
 const GRID_SIZE = 4;
@@ -67,14 +67,20 @@ function generateGridPattern(count: number): number[] {
 }
 
 // ---- Sequence / Reverse Recall ----
-// This component is rendered with a `key={round}` so it fully remounts each round.
+// Uses a single mount effect + chained timeouts instead of reactive useEffect.
 
 function SequenceRecall({
-  config,
+  sequenceLength,
+  displayTimePerItemMs,
+  delayMs,
+  hasDualTask,
   isReverse,
   onRoundComplete,
 }: {
-  config: ReturnType<typeof getMemoryConfig>;
+  sequenceLength: number;
+  displayTimePerItemMs: number;
+  delayMs: number;
+  hasDualTask: boolean;
   isReverse: boolean;
   onRoundComplete: (accuracy: number, reactionTime: number) => void;
 }) {
@@ -85,58 +91,56 @@ function SequenceRecall({
   const [mathInput, setMathInput] = useState("");
   const [roundStartTime, setRoundStartTime] = useState(0);
 
-  const [sequence] = useState<string[]>(() => generateSequence(config.sequenceLength));
-  const [recallOptions] = useState<string[]>(() => buildRecallOptions(sequence));
+  const [sequence] = useState<string[]>(() => generateSequence(sequenceLength));
+  const [recallOptions] = useState<string[]>(() => {
+    const seq = sequence;
+    return buildRecallOptions(seq);
+  });
   const expected = useMemo(
     () => (isReverse ? [...sequence].reverse() : [...sequence]),
     [sequence, isReverse]
   );
 
-  const completedRef = useRef(false);
-  const timersRef = useRef<ReturnType<typeof setTimeout>[]>([]);
+  const timerRef = useRef<ReturnType<typeof setTimeout>>();
+  const mountedRef = useRef(true);
 
   useEffect(() => {
-    return () => {
-      timersRef.current.forEach(clearTimeout);
-    };
-  }, []);
+    mountedRef.current = true;
 
-  const addTimer = useCallback((fn: () => void, delay: number) => {
-    const id = setTimeout(fn, delay);
-    timersRef.current.push(id);
-    return id;
-  }, []);
+    // Chain timeouts: show each item, then transition to delay, then recall
+    let step = 0;
 
-  useEffect(() => {
-    if (phase !== "showing" || sequence.length === 0) return;
+    function tick() {
+      if (!mountedRef.current) return;
 
-    if (currentShowIndex >= sequence.length) {
-      if (config.hasDualTask) {
-        setMathProblem(generateMathProblem());
-        setPhase("dual_task");
+      if (step < sequence.length) {
+        setCurrentShowIndex(step);
+        step++;
+        timerRef.current = setTimeout(tick, displayTimePerItemMs);
       } else {
-        setPhase("delay");
-        const timer = addTimer(() => {
-          setPhase("recall");
-          setRoundStartTime(performance.now());
-        }, config.delayMs);
-        return () => clearTimeout(timer);
+        // Done showing all items
+        if (hasDualTask) {
+          setMathProblem(generateMathProblem());
+          setPhase("dual_task");
+        } else {
+          setPhase("delay");
+          timerRef.current = setTimeout(() => {
+            if (!mountedRef.current) return;
+            setPhase("recall");
+            setRoundStartTime(performance.now());
+          }, delayMs);
+        }
       }
-      return;
     }
 
-    const timer = addTimer(() => {
-      setCurrentShowIndex((prev) => prev + 1);
-    }, config.displayTimePerItemMs);
+    // Show first item immediately, then start ticking
+    timerRef.current = setTimeout(tick, displayTimePerItemMs);
 
-    return () => clearTimeout(timer);
-  }, [phase, currentShowIndex, sequence, config, addTimer]);
-
-  const finishRound = useCallback((accuracy: number, reactionTime: number) => {
-    if (completedRef.current) return;
-    completedRef.current = true;
-    onRoundComplete(accuracy, reactionTime);
-  }, [onRoundComplete]);
+    return () => {
+      mountedRef.current = false;
+      clearTimeout(timerRef.current);
+    };
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   const handleRecallInput = (item: string) => {
     if (phase !== "recall" || userInput.length >= expected.length) return;
@@ -151,14 +155,14 @@ function SequenceRecall({
         if (newInput[i] === expected[i]) correct++;
       }
       setPhase("feedback");
-      addTimer(() => finishRound(correct / expected.length, reactionTime), 2000);
+      setTimeout(() => onRoundComplete(correct / expected.length, reactionTime), 2000);
     }
   };
 
   const handleSkip = () => {
     setPhase("feedback");
     setUserInput(Array(expected.length).fill("?"));
-    addTimer(() => finishRound(0, 10000), 1500);
+    setTimeout(() => onRoundComplete(0, 10000), 1500);
   };
 
   return (
@@ -300,16 +304,20 @@ function SequenceRecall({
 }
 
 // ---- Grid Pattern Recall ----
-// This component is rendered with a `key={round}` so it fully remounts each round.
+// Same approach: single mount effect with chained timeouts.
 
 function GridPatternRecall({
-  config,
+  sequenceLength,
+  displayTimePerItemMs,
+  delayMs,
   onRoundComplete,
 }: {
-  config: ReturnType<typeof getMemoryConfig>;
+  sequenceLength: number;
+  displayTimePerItemMs: number;
+  delayMs: number;
   onRoundComplete: (accuracy: number, reactionTime: number) => void;
 }) {
-  const cellCount = Math.min(config.sequenceLength + 1, GRID_SIZE * GRID_SIZE - 2);
+  const cellCount = Math.min(sequenceLength + 1, GRID_SIZE * GRID_SIZE - 2);
 
   const [phase, setPhase] = useState<Phase>("showing");
   const [pattern] = useState<number[]>(() => generateGridPattern(cellCount));
@@ -317,45 +325,37 @@ function GridPatternRecall({
   const [userSelected, setUserSelected] = useState<Set<number>>(new Set());
   const [roundStartTime, setRoundStartTime] = useState(0);
 
-  const completedRef = useRef(false);
-  const timersRef = useRef<ReturnType<typeof setTimeout>[]>([]);
+  const timerRef = useRef<ReturnType<typeof setTimeout>>();
+  const mountedRef = useRef(true);
 
   useEffect(() => {
-    return () => {
-      timersRef.current.forEach(clearTimeout);
-    };
-  }, []);
+    mountedRef.current = true;
+    let step = 0;
 
-  const addTimer = useCallback((fn: () => void, delay: number) => {
-    const id = setTimeout(fn, delay);
-    timersRef.current.push(id);
-    return id;
-  }, []);
+    function tick() {
+      if (!mountedRef.current) return;
 
-  useEffect(() => {
-    if (phase !== "showing" || pattern.length === 0) return;
-
-    if (showIndex >= pattern.length) {
-      setPhase("delay");
-      const timer = addTimer(() => {
-        setPhase("recall");
-        setRoundStartTime(performance.now());
-      }, config.delayMs);
-      return () => clearTimeout(timer);
+      if (step < pattern.length) {
+        setShowIndex(step);
+        step++;
+        timerRef.current = setTimeout(tick, displayTimePerItemMs);
+      } else {
+        setPhase("delay");
+        timerRef.current = setTimeout(() => {
+          if (!mountedRef.current) return;
+          setPhase("recall");
+          setRoundStartTime(performance.now());
+        }, delayMs);
+      }
     }
 
-    const timer = addTimer(() => {
-      setShowIndex((prev) => prev + 1);
-    }, config.displayTimePerItemMs);
+    timerRef.current = setTimeout(tick, displayTimePerItemMs);
 
-    return () => clearTimeout(timer);
-  }, [phase, showIndex, pattern, config, addTimer]);
-
-  const finishRound = useCallback((accuracy: number, reactionTime: number) => {
-    if (completedRef.current) return;
-    completedRef.current = true;
-    onRoundComplete(accuracy, reactionTime);
-  }, [onRoundComplete]);
+    return () => {
+      mountedRef.current = false;
+      clearTimeout(timerRef.current);
+    };
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   const handleCellClick = (index: number) => {
     if (phase !== "recall") return;
@@ -376,17 +376,17 @@ function GridPatternRecall({
       if (pattern.includes(idx)) correct++;
     }
     setPhase("feedback");
-    addTimer(() => finishRound(pattern.length > 0 ? correct / pattern.length : 0, reactionTime), 2000);
+    setTimeout(() => onRoundComplete(pattern.length > 0 ? correct / pattern.length : 0, reactionTime), 2000);
   };
 
   const handleSkip = () => {
     setPhase("feedback");
-    addTimer(() => finishRound(0, 10000), 1500);
+    setTimeout(() => onRoundComplete(0, 10000), 1500);
   };
 
   const getCellClass = (index: number) => {
     if (phase === "showing") {
-      return pattern.slice(0, showIndex).includes(index) ? "bg-primary" : "bg-surface-lighter";
+      return pattern.slice(0, showIndex + 1).includes(index) ? "bg-primary" : "bg-surface-lighter";
     }
     if (phase === "delay") return "bg-surface-lighter";
     if (phase === "recall") {
@@ -462,7 +462,7 @@ function GridPatternRecall({
 // ---- Main component ----
 
 export default function WorkingMemory({ difficulty, streak = 0, variant, onComplete }: WorkingMemoryProps) {
-  const config = getMemoryConfig(difficulty, streak);
+  const config = useMemo(() => getMemoryConfig(difficulty, streak), [difficulty, streak]);
 
   const chosenVariant = useMemo(
     () => variant || MEMORY_VARIANTS[Math.floor(Math.random() * MEMORY_VARIANTS.length)],
@@ -473,32 +473,32 @@ export default function WorkingMemory({ difficulty, streak = 0, variant, onCompl
   const [round, setRound] = useState(0);
   const reactionTimes = useRef<number[]>([]);
   const accuracies = useRef<number[]>([]);
-  const finishedRef = useRef(false);
 
   const handleRoundComplete = useCallback((accuracy: number, reactionTime: number) => {
     reactionTimes.current.push(reactionTime);
     accuracies.current.push(accuracy);
 
-    const nextRound = reactionTimes.current.length;
-    if (nextRound >= TOTAL_ROUNDS) {
-      if (finishedRef.current) return;
-      finishedRef.current = true;
+    setRound((prev) => {
+      const nextRound = prev + 1;
+      if (nextRound >= TOTAL_ROUNDS) {
+        const avgReactionTime =
+          reactionTimes.current.reduce((a, b) => a + b, 0) / reactionTimes.current.length;
+        const avgAccuracy =
+          accuracies.current.reduce((a, b) => a + b, 0) / accuracies.current.length;
 
-      const avgReactionTime =
-        reactionTimes.current.reduce((a, b) => a + b, 0) / reactionTimes.current.length;
-      const avgAccuracy =
-        accuracies.current.reduce((a, b) => a + b, 0) / accuracies.current.length;
-
-      onComplete({
-        moduleType: "memory",
-        avgReactionTime: Math.round(avgReactionTime),
-        accuracy: avgAccuracy,
-        difficultyLevel: difficulty,
-        roundsCompleted: TOTAL_ROUNDS,
-      });
-    } else {
-      setRound(nextRound);
-    }
+        setTimeout(() => {
+          onComplete({
+            moduleType: "memory",
+            avgReactionTime: Math.round(avgReactionTime),
+            accuracy: avgAccuracy,
+            difficultyLevel: difficulty,
+            roundsCompleted: TOTAL_ROUNDS,
+          });
+        }, 0);
+        return prev;
+      }
+      return nextRound;
+    });
   }, [difficulty, onComplete]);
 
   return (
@@ -511,13 +511,18 @@ export default function WorkingMemory({ difficulty, streak = 0, variant, onCompl
       {chosenVariant === "grid_pattern" ? (
         <GridPatternRecall
           key={round}
-          config={config}
+          sequenceLength={config.sequenceLength}
+          displayTimePerItemMs={config.displayTimePerItemMs}
+          delayMs={config.delayMs}
           onRoundComplete={handleRoundComplete}
         />
       ) : (
         <SequenceRecall
           key={round}
-          config={config}
+          sequenceLength={config.sequenceLength}
+          displayTimePerItemMs={config.displayTimePerItemMs}
+          delayMs={config.delayMs}
+          hasDualTask={config.hasDualTask}
           isReverse={chosenVariant === "reverse"}
           onRoundComplete={handleRoundComplete}
         />
