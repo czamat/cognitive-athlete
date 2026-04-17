@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useCallback, useRef } from "react";
+import { useState, useEffect, useRef, useMemo } from "react";
 import { getMemoryConfig } from "@/lib/difficulty";
 import ModuleShell from "./ModuleShell";
 import Button from "../ui/Button";
@@ -16,7 +16,7 @@ interface WorkingMemoryProps {
   onComplete: (result: ModuleResult) => void;
 }
 
-type Phase = "init" | "showing" | "delay" | "dual_task" | "recall" | "feedback";
+type Phase = "showing" | "delay" | "dual_task" | "recall" | "feedback";
 
 function generateMathProblem(): { question: string; answer: number } {
   const a = Math.floor(Math.random() * 12) + 2;
@@ -38,34 +38,39 @@ function generateSequence(length: number): string[] {
   return shuffled.slice(0, length);
 }
 
+function buildRecallOptions(sequence: string[]): string[] {
+  const extras = ITEM_POOL.filter((x) => !sequence.includes(x))
+    .sort(() => Math.random() - 0.5)
+    .slice(0, Math.max(4, 9 - sequence.length));
+  return [...sequence, ...extras].sort(() => Math.random() - 0.5);
+}
+
 export default function WorkingMemory({ difficulty, streak = 0, onComplete }: WorkingMemoryProps) {
   const config = getMemoryConfig(difficulty, streak);
 
   const [round, setRound] = useState(0);
-  const [phase, setPhase] = useState<Phase>("init");
-  const [sequence, setSequence] = useState<string[]>(() => generateSequence(config.sequenceLength));
+  const [phase, setPhase] = useState<Phase>("showing");
+  const [roundKey, setRoundKey] = useState(0);
+
+  const sequenceRef = useRef<string[]>(generateSequence(config.sequenceLength));
+  const recallOptionsRef = useRef<string[]>(buildRecallOptions(sequenceRef.current));
+
   const [currentShowIndex, setCurrentShowIndex] = useState(0);
   const [userInput, setUserInput] = useState<string[]>([]);
-  const [currentInputIndex, setCurrentInputIndex] = useState(0);
 
   const [mathProblem, setMathProblem] = useState<{ question: string; answer: number } | null>(null);
   const [mathInput, setMathInput] = useState("");
   const [roundStartTime, setRoundStartTime] = useState(0);
-  const [stableOptions, setStableOptions] = useState<string[]>([]);
 
   const reactionTimes = useRef<number[]>([]);
   const accuracies = useRef<number[]>([]);
 
-  // Start showing on mount and after each new round
-  useEffect(() => {
-    if (phase === "init" && sequence.length > 0) {
-      setPhase("showing");
-    }
-  }, [phase, sequence]);
+  const sequence = sequenceRef.current;
+  const recallOptions = recallOptionsRef.current;
 
   // Animate sequence display one item at a time
   useEffect(() => {
-    if (phase !== "showing" || sequence.length === 0) return;
+    if (phase !== "showing") return;
 
     if (currentShowIndex >= sequence.length) {
       if (config.hasDualTask) {
@@ -87,28 +92,18 @@ export default function WorkingMemory({ difficulty, streak = 0, onComplete }: Wo
     }, config.displayTimePerItemMs);
 
     return () => clearTimeout(timer);
-  }, [phase, currentShowIndex, sequence.length, config]);
+  }, [phase, currentShowIndex, sequence.length, config, roundKey]);
 
-  // Generate stable recall options when entering recall phase
-  useEffect(() => {
-    if (phase === "recall" && stableOptions.length === 0) {
-      const extras = ITEM_POOL.filter((x) => !sequence.includes(x))
-        .sort(() => Math.random() - 0.5)
-        .slice(0, Math.max(4, 9 - sequence.length));
-      setStableOptions([...sequence, ...extras].sort(() => Math.random() - 0.5));
-    }
-  }, [phase, sequence, stableOptions.length]);
-
-  const startNextRound = useCallback(() => {
+  const startNextRound = () => {
     const seq = generateSequence(config.sequenceLength);
-    setSequence(seq);
+    sequenceRef.current = seq;
+    recallOptionsRef.current = buildRecallOptions(seq);
     setCurrentShowIndex(0);
     setUserInput([]);
-    setCurrentInputIndex(0);
     setMathInput("");
-    setStableOptions([]);
-    setPhase("init");
-  }, [config.sequenceLength]);
+    setPhase("showing");
+    setRoundKey((k) => k + 1);
+  };
 
   const handleDualTaskSubmit = () => {
     setPhase("recall");
@@ -117,10 +112,10 @@ export default function WorkingMemory({ difficulty, streak = 0, onComplete }: Wo
 
   const handleRecallInput = (item: string) => {
     if (phase !== "recall") return;
+    if (userInput.length >= sequence.length) return;
 
     const newInput = [...userInput, item];
     setUserInput(newInput);
-    setCurrentInputIndex(newInput.length);
 
     if (newInput.length === sequence.length) {
       const reactionTime = performance.now() - roundStartTime;
@@ -161,7 +156,31 @@ export default function WorkingMemory({ difficulty, streak = 0, onComplete }: Wo
   const handleUndo = () => {
     if (userInput.length > 0) {
       setUserInput(userInput.slice(0, -1));
-      setCurrentInputIndex(userInput.length - 1);
+    }
+  };
+
+  const handleSkipRound = () => {
+    const reactionTime = 10000;
+    reactionTimes.current.push(reactionTime);
+    accuracies.current.push(0);
+
+    const nextRound = round + 1;
+    if (nextRound >= TOTAL_ROUNDS) {
+      const avgReactionTime =
+        reactionTimes.current.reduce((a, b) => a + b, 0) / reactionTimes.current.length;
+      const avgAccuracy =
+        accuracies.current.reduce((a, b) => a + b, 0) / accuracies.current.length;
+
+      onComplete({
+        moduleType: "memory",
+        avgReactionTime: Math.round(avgReactionTime),
+        accuracy: avgAccuracy,
+        difficultyLevel: difficulty,
+        roundsCompleted: TOTAL_ROUNDS,
+      });
+    } else {
+      setRound(nextRound);
+      startNextRound();
     }
   };
 
@@ -172,12 +191,12 @@ export default function WorkingMemory({ difficulty, streak = 0, onComplete }: Wo
       round={round + 1}
       totalRounds={TOTAL_ROUNDS}
     >
-      {(phase === "init" || phase === "showing") && (
-        <div className="text-center animate-scale-in">
+      {phase === "showing" && (
+        <div className="text-center animate-scale-in" key={`show-${roundKey}`}>
           <p className="text-xs text-muted mb-4">Memorize the sequence</p>
           <div className="w-28 h-28 flex items-center justify-center bg-surface rounded-3xl border-2 border-primary/30 mx-auto">
-            {phase === "showing" && currentShowIndex < sequence.length && (
-              <span className="text-4xl font-bold text-primary animate-scale-in" key={currentShowIndex}>
+            {currentShowIndex < sequence.length && (
+              <span className="text-4xl font-bold text-primary animate-scale-in" key={`item-${currentShowIndex}`}>
                 {sequence[currentShowIndex]}
               </span>
             )}
@@ -187,7 +206,7 @@ export default function WorkingMemory({ difficulty, streak = 0, onComplete }: Wo
               <div
                 key={i}
                 className={`w-2 h-2 rounded-full ${
-                  phase === "showing" && i <= currentShowIndex ? "bg-primary" : "bg-surface-lighter"
+                  i <= currentShowIndex ? "bg-primary" : "bg-surface-lighter"
                 }`}
               />
             ))}
@@ -230,7 +249,7 @@ export default function WorkingMemory({ difficulty, streak = 0, onComplete }: Wo
                 className={`w-11 h-11 flex items-center justify-center rounded-xl border text-lg font-bold ${
                   i < userInput.length
                     ? "bg-primary/20 border-primary text-primary"
-                    : i === currentInputIndex
+                    : i === userInput.length
                     ? "border-primary/50 border-dashed"
                     : "border-surface-lighter"
                 }`}
@@ -241,7 +260,7 @@ export default function WorkingMemory({ difficulty, streak = 0, onComplete }: Wo
           </div>
 
           <div className="grid grid-cols-4 gap-2 mb-3">
-            {stableOptions.map((item) => (
+            {recallOptions.map((item) => (
               <button
                 key={item}
                 onClick={() => handleRecallInput(item)}
@@ -256,9 +275,14 @@ export default function WorkingMemory({ difficulty, streak = 0, onComplete }: Wo
             ))}
           </div>
 
-          <Button variant="ghost" size="sm" onClick={handleUndo} disabled={userInput.length === 0}>
-            Undo
-          </Button>
+          <div className="flex gap-2">
+            <Button variant="ghost" size="sm" onClick={handleUndo} disabled={userInput.length === 0}>
+              Undo
+            </Button>
+            <Button variant="ghost" size="sm" onClick={handleSkipRound} className="ml-auto text-muted">
+              Skip
+            </Button>
+          </div>
         </div>
       )}
 
