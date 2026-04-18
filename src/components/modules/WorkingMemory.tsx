@@ -1,7 +1,13 @@
 "use client";
 
 import { useState, useEffect, useRef, useMemo, useCallback } from "react";
-import { getMemoryConfig } from "@/lib/difficulty";
+import {
+  getMemoryConfig,
+  getMemoryDualTaskLimitMs,
+  getMemoryRecallLimitMs,
+} from "@/lib/difficulty";
+import { usePressureTimer } from "@/hooks/usePressureTimer";
+import PressureTimerBar from "@/components/ui/PressureTimerBar";
 import ModuleShell from "./ModuleShell";
 import Button from "../ui/Button";
 import type { ModuleResult } from "@/hooks/useWorkout";
@@ -75,6 +81,8 @@ function SequenceRecall({
   delayMs,
   hasDualTask,
   isReverse,
+  difficulty,
+  streak,
   onRoundComplete,
 }: {
   sequenceLength: number;
@@ -82,6 +90,8 @@ function SequenceRecall({
   delayMs: number;
   hasDualTask: boolean;
   isReverse: boolean;
+  difficulty: number;
+  streak: number;
   onRoundComplete: (accuracy: number, reactionTime: number) => void;
 }) {
   const [phase, setPhase] = useState<Phase>("showing");
@@ -99,6 +109,50 @@ function SequenceRecall({
   const expected = useMemo(
     () => (isReverse ? [...sequence].reverse() : [...sequence]),
     [sequence, isReverse]
+  );
+
+  const phaseRef = useRef<Phase>("showing");
+  const userInputRef = useRef<string[]>([]);
+  phaseRef.current = phase;
+  userInputRef.current = userInput;
+
+  const dualLimitMs = useMemo(
+    () => getMemoryDualTaskLimitMs(difficulty, streak),
+    [difficulty, streak]
+  );
+  const recallLimitMs = useMemo(
+    () => getMemoryRecallLimitMs(difficulty, streak, expected.length),
+    [difficulty, streak, expected.length]
+  );
+
+  const handleDualTimeout = useCallback(() => {
+    if (phaseRef.current !== "dual_task") return;
+    setPhase("recall");
+    setRoundStartTime(performance.now());
+  }, []);
+
+  const handleRecallTimeout = useCallback(() => {
+    if (phaseRef.current !== "recall") return;
+    const ui = userInputRef.current;
+    const rt = performance.now() - roundStartTime;
+    let correct = 0;
+    for (let i = 0; i < expected.length; i++) {
+      if (ui[i] === expected[i]) correct++;
+    }
+    const acc = expected.length > 0 ? correct / expected.length : 0;
+    setPhase("feedback");
+    setTimeout(() => onRoundComplete(acc, rt), 2000);
+  }, [expected, roundStartTime, onRoundComplete]);
+
+  const { remainingMs: dualRemaining, fraction: dualFraction } = usePressureTimer(
+    phase === "dual_task",
+    dualLimitMs,
+    handleDualTimeout
+  );
+  const { remainingMs: recallRemaining, fraction: recallFraction } = usePressureTimer(
+    phase === "recall",
+    recallLimitMs,
+    handleRecallTimeout
   );
 
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -198,6 +252,12 @@ function SequenceRecall({
 
       {phase === "dual_task" && mathProblem && (
         <div className="text-center animate-fade-in w-full">
+          <PressureTimerBar
+            remainingMs={dualRemaining}
+            fraction={dualFraction}
+            label="Answer"
+            className="mb-4"
+          />
           <p className="text-xs text-muted mb-3">Solve while remembering</p>
           <p className="text-3xl font-bold mb-6">{mathProblem.question}</p>
           <input
@@ -215,6 +275,12 @@ function SequenceRecall({
 
       {phase === "recall" && (
         <div className="w-full animate-fade-in">
+          <PressureTimerBar
+            remainingMs={recallRemaining}
+            fraction={recallFraction}
+            label="Recall"
+            className="mb-4"
+          />
           <p className="text-xs text-muted text-center mb-3">
             {isReverse ? "Enter backwards" : "Enter the sequence"} ({userInput.length}/{expected.length})
           </p>
@@ -307,11 +373,15 @@ function GridPatternRecall({
   sequenceLength,
   displayTimePerItemMs,
   delayMs,
+  difficulty,
+  streak,
   onRoundComplete,
 }: {
   sequenceLength: number;
   displayTimePerItemMs: number;
   delayMs: number;
+  difficulty: number;
+  streak: number;
   onRoundComplete: (accuracy: number, reactionTime: number) => void;
 }) {
   const cellCount = Math.min(sequenceLength + 1, GRID_SIZE * GRID_SIZE - 2);
@@ -321,6 +391,33 @@ function GridPatternRecall({
   const [showIndex, setShowIndex] = useState(0);
   const [userSelected, setUserSelected] = useState<Set<number>>(new Set());
   const [roundStartTime, setRoundStartTime] = useState(0);
+
+  const phaseRef = useRef<Phase>("showing");
+  const userSelectedRef = useRef<Set<number>>(new Set());
+  phaseRef.current = phase;
+  userSelectedRef.current = userSelected;
+
+  const recallLimitMs = useMemo(
+    () => getMemoryRecallLimitMs(difficulty, streak, pattern.length),
+    [difficulty, streak, pattern.length]
+  );
+
+  const handleRecallTimeout = useCallback(() => {
+    if (phaseRef.current !== "recall") return;
+    const rt = performance.now() - roundStartTime;
+    let correct = 0;
+    for (const idx of userSelectedRef.current) {
+      if (pattern.includes(idx)) correct++;
+    }
+    setPhase("feedback");
+    setTimeout(() => onRoundComplete(pattern.length > 0 ? correct / pattern.length : 0, rt), 2000);
+  }, [pattern, roundStartTime, onRoundComplete]);
+
+  const { remainingMs: gridRecallRemaining, fraction: gridRecallFraction } = usePressureTimer(
+    phase === "recall",
+    recallLimitMs,
+    handleRecallTimeout
+  );
 
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const mountedRef = useRef(true);
@@ -409,9 +506,17 @@ function GridPatternRecall({
         </div>
       )}
       {phase === "recall" && (
-        <p className="text-xs text-muted text-center mb-4">
-          Tap the cells that were highlighted ({userSelected.size}/{pattern.length})
-        </p>
+        <>
+          <PressureTimerBar
+            remainingMs={gridRecallRemaining}
+            fraction={gridRecallFraction}
+            label="Select"
+            className="mb-4 max-w-[240px] mx-auto"
+          />
+          <p className="text-xs text-muted text-center mb-4">
+            Tap the cells that were highlighted ({userSelected.size}/{pattern.length})
+          </p>
+        </>
       )}
       {phase === "feedback" && (
         <p className="text-xs text-muted text-center mb-4">Results</p>
@@ -511,6 +616,8 @@ export default function WorkingMemory({ difficulty, streak = 0, variant, onCompl
           sequenceLength={config.sequenceLength}
           displayTimePerItemMs={config.displayTimePerItemMs}
           delayMs={config.delayMs}
+          difficulty={difficulty}
+          streak={streak}
           onRoundComplete={handleRoundComplete}
         />
       ) : (
@@ -521,6 +628,8 @@ export default function WorkingMemory({ difficulty, streak = 0, variant, onCompl
           delayMs={config.delayMs}
           hasDualTask={config.hasDualTask}
           isReverse={chosenVariant === "reverse"}
+          difficulty={difficulty}
+          streak={streak}
           onRoundComplete={handleRoundComplete}
         />
       )}

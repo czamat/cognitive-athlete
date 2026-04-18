@@ -1,7 +1,9 @@
 "use client";
 
 import { useState, useEffect, useRef, useCallback, useMemo } from "react";
-import { getAttentionConfig } from "@/lib/difficulty";
+import { getAttentionConfig, getAttentionSelectLimitMs } from "@/lib/difficulty";
+import { usePressureTimer } from "@/hooks/usePressureTimer";
+import PressureTimerBar from "@/components/ui/PressureTimerBar";
 import ModuleShell from "./ModuleShell";
 import type { ModuleResult } from "@/hooks/useWorkout";
 
@@ -83,6 +85,10 @@ function spawnDots(count: number, targetCount: number, speed: number, useColors:
 
 export default function AttentionControl({ difficulty, streak = 0, variant, onComplete }: AttentionControlProps) {
   const config = getAttentionConfig(difficulty, streak);
+  const selectLimitMs = useMemo(
+    () => getAttentionSelectLimitMs(difficulty, streak),
+    [difficulty, streak]
+  );
 
   const chosenVariant = useMemo(
     () => variant || ATTENTION_VARIANTS[Math.floor(Math.random() * ATTENTION_VARIANTS.length)],
@@ -102,6 +108,10 @@ export default function AttentionControl({ difficulty, streak = 0, variant, onCo
 
   const reactionTimes = useRef<number[]>([]);
   const accuracies = useRef<number[]>([]);
+  const phaseRef = useRef<Phase>("highlight");
+  const selectedRef = useRef<Set<number>>(new Set());
+  phaseRef.current = phase;
+  selectedRef.current = selected;
   const animFrameRef = useRef<number>(0);
   const dotsRef = useRef<Dot[]>([]);
   const timersRef = useRef<ReturnType<typeof setTimeout>[]>([]);
@@ -210,18 +220,8 @@ export default function AttentionControl({ difficulty, streak = 0, variant, onCo
     return clearAllTimers;
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
-  const handleDotClick = (dotId: number) => {
-    if (phase !== "select") return;
-
-    const newSelected = new Set(selected);
-    if (newSelected.has(dotId)) {
-      newSelected.delete(dotId);
-    } else if (newSelected.size < config.targetDots) {
-      newSelected.add(dotId);
-    }
-    setSelected(newSelected);
-
-    if (newSelected.size === config.targetDots) {
+  const finalizeRound = useCallback(
+    (newSelected: Set<number>) => {
       const reactionTime = performance.now() - roundStartTime;
       reactionTimes.current.push(reactionTime);
 
@@ -256,6 +256,43 @@ export default function AttentionControl({ difficulty, streak = 0, variant, onCo
           initDots();
         }
       }, 1500);
+    },
+    [
+      roundStartTime,
+      dots,
+      config.targetDots,
+      round,
+      addTimer,
+      initDots,
+      onComplete,
+      difficulty,
+    ]
+  );
+
+  const handleSelectTimeout = useCallback(() => {
+    if (phaseRef.current !== "select") return;
+    finalizeRound(new Set(selectedRef.current));
+  }, [finalizeRound]);
+
+  const { remainingMs: selectRemaining, fraction: selectFraction } = usePressureTimer(
+    phase === "select",
+    selectLimitMs,
+    handleSelectTimeout
+  );
+
+  const handleDotClick = (dotId: number) => {
+    if (phase !== "select") return;
+
+    const newSelected = new Set(selected);
+    if (newSelected.has(dotId)) {
+      newSelected.delete(dotId);
+    } else if (newSelected.size < config.targetDots) {
+      newSelected.add(dotId);
+    }
+    setSelected(newSelected);
+
+    if (newSelected.size === config.targetDots) {
+      finalizeRound(newSelected);
     }
   };
 
@@ -298,6 +335,15 @@ export default function AttentionControl({ difficulty, streak = 0, variant, onCo
         {phase === "select" && `Select ${config.targetDots} target dots`}
         {phase === "feedback" && "Results"}
       </p>
+
+      {phase === "select" && (
+        <PressureTimerBar
+          remainingMs={selectRemaining}
+          fraction={selectFraction}
+          label="Select"
+          className="mb-3 max-w-[320px] mx-auto"
+        />
+      )}
 
       <div
         className={`relative rounded-3xl border border-surface-lighter overflow-hidden touch-manipulation transition-colors duration-100 ${

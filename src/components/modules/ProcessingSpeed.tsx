@@ -2,7 +2,9 @@
 
 import { useState, useEffect, useCallback, useRef, useMemo } from "react";
 import { useTimer } from "@/hooks/useTimer";
-import { getProcessingSpeedConfig } from "@/lib/difficulty";
+import { getProcessingSpeedConfig, getProcessingSpeedChoiceLimitMs } from "@/lib/difficulty";
+import { usePressureTimer } from "@/hooks/usePressureTimer";
+import PressureTimerBar from "@/components/ui/PressureTimerBar";
 import ModuleShell from "./ModuleShell";
 import type { ModuleResult } from "@/hooks/useWorkout";
 
@@ -169,9 +171,17 @@ export default function ProcessingSpeed({ difficulty, streak = 0, variant, onCom
   const [isCorrect, setIsCorrect] = useState(false);
 
   const roundRef = useRef(0);
+  const phaseRef = useRef<Phase>("showing");
   const reactionTimes = useRef<number[]>([]);
   const correctCount = useRef(0);
   const timersRef = useRef<ReturnType<typeof setTimeout>[]>([]);
+
+  const choiceLimitMs = useMemo(
+    () => getProcessingSpeedChoiceLimitMs(difficulty, streak),
+    [difficulty, streak]
+  );
+
+  phaseRef.current = phase;
 
   const clearTimers = useCallback(() => {
     timersRef.current.forEach(clearTimeout);
@@ -195,23 +205,7 @@ export default function ProcessingSpeed({ difficulty, streak = 0, variant, onCom
     }, config.displayTimeMs);
   }, [generate, config, timer, addTimer]);
 
-  useEffect(() => {
-    startRound();
-    return clearTimers;
-  }, []); // eslint-disable-line react-hooks/exhaustive-deps
-
-  const handleSelect = (value: string) => {
-    if (phase !== "options") return;
-
-    const reactionTime = timer.stop();
-    reactionTimes.current.push(reactionTime);
-
-    const correct = value === currentRound.correctValue;
-    if (correct) correctCount.current++;
-
-    setIsCorrect(correct);
-    setPhase("feedback");
-
+  const advanceAfterFeedback = useCallback(() => {
     addTimer(() => {
       const nextRound = roundRef.current + 1;
       if (nextRound >= TOTAL_ROUNDS) {
@@ -232,6 +226,41 @@ export default function ProcessingSpeed({ difficulty, streak = 0, variant, onCom
         startRound();
       }
     }, 600);
+  }, [addTimer, startRound, onComplete, difficulty]);
+
+  useEffect(() => {
+    startRound();
+    return clearTimers;
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const handleChoiceTimeout = useCallback(() => {
+    if (phaseRef.current !== "options") return;
+    const reactionTime = timer.stop();
+    reactionTimes.current.push(reactionTime > 0 ? reactionTime : choiceLimitMs);
+    setIsCorrect(false);
+    setPhase("feedback");
+    advanceAfterFeedback();
+  }, [timer, choiceLimitMs, advanceAfterFeedback]);
+
+  const { remainingMs: choiceRemaining, fraction: choiceFraction } = usePressureTimer(
+    phase === "options",
+    choiceLimitMs,
+    handleChoiceTimeout
+  );
+
+  const handleSelect = (value: string) => {
+    if (phase !== "options") return;
+
+    const reactionTime = timer.stop();
+    reactionTimes.current.push(reactionTime);
+
+    const correct = value === currentRound.correctValue;
+    if (correct) correctCount.current++;
+
+    setIsCorrect(correct);
+    setPhase("feedback");
+
+    advanceAfterFeedback();
   };
 
   return (
@@ -252,6 +281,12 @@ export default function ProcessingSpeed({ difficulty, streak = 0, variant, onCom
 
       {phase === "options" && (
         <div className="w-full animate-fade-in">
+          <PressureTimerBar
+            remainingMs={choiceRemaining}
+            fraction={choiceFraction}
+            label="Choose"
+            className="mb-4"
+          />
           <p className="text-sm text-center text-muted mb-6">{currentRound.questionText}</p>
           <div className="grid grid-cols-2 gap-3">
             {currentRound.options.map((opt, i) => (

@@ -22,6 +22,39 @@ function applyStreakBonus(baseDifficulty: number, streak: number): number {
   return Math.min(MAX_DIFFICULTY, baseDifficulty + bonus);
 }
 
+/** Effective difficulty after streak bonus (same curve as module configs). */
+export function getEffectiveDifficulty(baseDifficulty: number, streak: number): number {
+  return applyStreakBonus(baseDifficulty, streak);
+}
+
+// --- Answer / input time limits (pressure); tighter at higher effective difficulty ---
+
+export function getProcessingSpeedChoiceLimitMs(difficulty: number, streak: number = 0): number {
+  const d = getEffectiveDifficulty(difficulty, streak);
+  return Math.max(2200, 6600 - Math.round(d * 400));
+}
+
+export function getAttentionSelectLimitMs(difficulty: number, streak: number = 0): number {
+  const d = getEffectiveDifficulty(difficulty, streak);
+  return Math.max(7000, 24000 - Math.round(d * 1100));
+}
+
+export function getMemoryDualTaskLimitMs(difficulty: number, streak: number = 0): number {
+  const d = getEffectiveDifficulty(difficulty, streak);
+  return Math.max(4500, 14500 - Math.round(d * 780));
+}
+
+/** Recall phase: sequence length or grid cell count. */
+export function getMemoryRecallLimitMs(
+  difficulty: number,
+  streak: number,
+  itemCount: number
+): number {
+  const d = getEffectiveDifficulty(difficulty, streak);
+  const base = 10000 + itemCount * 3000;
+  return Math.max(9000, base - Math.round(d * 480));
+}
+
 export interface ProcessingSpeedConfig {
   displayTimeMs: number;
   symbolCount: number;
