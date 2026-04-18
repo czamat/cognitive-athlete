@@ -101,13 +101,12 @@ function SequenceRecall({
     [sequence, isReverse]
   );
 
-  const timerRef = useRef<ReturnType<typeof setTimeout>>();
+  const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const mountedRef = useRef(true);
 
   useEffect(() => {
     mountedRef.current = true;
 
-    // Chain timeouts: show each item, then transition to delay, then recall
     let step = 0;
 
     function tick() {
@@ -118,7 +117,6 @@ function SequenceRecall({
         step++;
         timerRef.current = setTimeout(tick, displayTimePerItemMs);
       } else {
-        // Done showing all items
         if (hasDualTask) {
           setMathProblem(generateMathProblem());
           setPhase("dual_task");
@@ -133,12 +131,11 @@ function SequenceRecall({
       }
     }
 
-    // Show first item immediately, then start ticking
     timerRef.current = setTimeout(tick, displayTimePerItemMs);
 
     return () => {
       mountedRef.current = false;
-      clearTimeout(timerRef.current);
+      if (timerRef.current) clearTimeout(timerRef.current);
     };
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -325,7 +322,7 @@ function GridPatternRecall({
   const [userSelected, setUserSelected] = useState<Set<number>>(new Set());
   const [roundStartTime, setRoundStartTime] = useState(0);
 
-  const timerRef = useRef<ReturnType<typeof setTimeout>>();
+  const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const mountedRef = useRef(true);
 
   useEffect(() => {
@@ -353,7 +350,7 @@ function GridPatternRecall({
 
     return () => {
       mountedRef.current = false;
-      clearTimeout(timerRef.current);
+      if (timerRef.current) clearTimeout(timerRef.current);
     };
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
