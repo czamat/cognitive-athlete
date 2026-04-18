@@ -46,11 +46,18 @@ export interface AttentionConfig {
 
 export function getAttentionConfig(difficulty: number, streak: number = 0): AttentionConfig {
   const d = applyStreakBonus(difficulty, streak);
+  // Higher baseline speed & crowd; scales with saved difficulty (1–10) + streak bonus (see applyStreakBonus).
+  // Cap total dots so the arena stays playable at ~320px.
+  const totalDots = Math.min(22, 9 + Math.floor(d * 1.35));
+  const targetDots = Math.min(
+    Math.max(2, totalDots - 4),
+    2 + Math.floor(d * 0.4)
+  );
   return {
-    totalDots: 6 + Math.floor(d * 0.8),
-    targetDots: 2 + Math.floor(d * 0.3),
-    movementSpeed: 1 + d * 0.4,
-    trackingDurationMs: 3000 + Math.round(d * 300),
+    totalDots,
+    targetDots,
+    movementSpeed: 2.25 + d * 0.72,
+    trackingDurationMs: 3200 + Math.round(d * 280),
   };
 }
 
