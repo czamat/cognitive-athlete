@@ -11,6 +11,12 @@ const TOTAL_ROUNDS = 5;
 const ARENA_SIZE = 320;
 const DOT_RADIUS = 12;
 const MIN_DISTANCE = DOT_RADIUS * 3.5;
+/** Ease-in so motion ramps from 0 → full speed instead of one-frame teleport after static highlight. */
+const MOTION_RAMP_MS = 450;
+
+function easeInQuad(t: number): number {
+  return t * t;
+}
 
 type AttentionVariant = "classic" | "color_tracking" | "distractor_flash";
 
@@ -129,12 +135,18 @@ export default function AttentionControl({ difficulty, streak = 0, variant, onCo
   }, []);
 
   const startAnimation = useCallback(() => {
+    const trackingStartedAt = performance.now();
+
     const animate = () => {
+      const now = performance.now();
+      const rampT = Math.min(1, (now - trackingStartedAt) / MOTION_RAMP_MS);
+      const motionScale = easeInQuad(rampT);
+
       const current = dotsRef.current;
 
       for (const dot of current) {
-        dot.x += dot.vx;
-        dot.y += dot.vy;
+        dot.x += dot.vx * motionScale;
+        dot.y += dot.vy * motionScale;
 
         if (dot.x <= DOT_RADIUS || dot.x >= ARENA_SIZE - DOT_RADIUS) {
           dot.vx *= -1;
@@ -351,26 +363,32 @@ export default function AttentionControl({ difficulty, streak = 0, variant, onCo
         }`}
         style={{ width: ARENA_SIZE, height: ARENA_SIZE }}
       >
-        {dots.map((dot) => (
-          <button
-            key={dot.id}
-            onClick={() => handleDotClick(dot.id)}
-            disabled={phase !== "select"}
-            className={`absolute rounded-full ${getDotColor(dot)} ${
-              phase === "select" ? "cursor-pointer z-10" : "cursor-default"
-            }`}
-            style={{
-              width: DOT_RADIUS * 2,
-              height: DOT_RADIUS * 2,
-              left: dot.x - DOT_RADIUS,
-              top: dot.y - DOT_RADIUS,
-              transform: phase === "highlight" && dot.isTarget ? "scale(1.3)" : "scale(1)",
-              transition: phase === "select" || phase === "feedback" ? "background-color 0.2s" : "none",
-              padding: phase === "select" ? 8 : 0,
-              margin: phase === "select" ? -8 : 0,
-            }}
-          />
-        ))}
+        {dots.map((dot) => {
+          const showTargetRing = phase === "highlight" && dot.isTarget;
+          return (
+            <button
+              key={dot.id}
+              onClick={() => handleDotClick(dot.id)}
+              disabled={phase !== "select"}
+              className={`absolute rounded-full ${getDotColor(dot)} ${
+                phase === "select" ? "cursor-pointer z-10" : "cursor-default"
+              } ${
+                showTargetRing
+                  ? "ring-2 ring-accent ring-offset-2 ring-offset-surface z-[1] [transform:translateZ(0)]"
+                  : ""
+              }`}
+              style={{
+                width: DOT_RADIUS * 2,
+                height: DOT_RADIUS * 2,
+                left: dot.x - DOT_RADIUS,
+                top: dot.y - DOT_RADIUS,
+                transition: phase === "select" || phase === "feedback" ? "background-color 0.2s" : "none",
+                padding: phase === "select" ? 8 : 0,
+                margin: phase === "select" ? -8 : 0,
+              }}
+            />
+          );
+        })}
       </div>
     </ModuleShell>
   );
