@@ -10,12 +10,15 @@ import type { ModuleResult } from "@/hooks/useWorkout";
 const TOTAL_ROUNDS = 5;
 const ARENA_SIZE = 320;
 const DOT_RADIUS = 12;
-const MIN_DISTANCE = DOT_RADIUS * 3.5;
-/** Ease-in so motion ramps from 0 → full speed instead of one-frame teleport after static highlight. */
-const MOTION_RAMP_MS = 450;
+const MIN_DISTANCE = DOT_RADIUS * 4;
+/** Memorize phase before motion (ms). */
+const HIGHLIGHT_MS = 2800;
+/** Smooth 0→1 with zero slope at both ends — avoids ease-in “snap” into full speed at end of ramp. */
+const MOTION_RAMP_MS = 950;
 
-function easeInQuad(t: number): number {
-  return t * t;
+function smoothstep01(t: number): number {
+  const x = Math.max(0, Math.min(1, t));
+  return x * x * (3 - 2 * x);
 }
 
 type AttentionVariant = "classic" | "color_tracking" | "distractor_flash";
@@ -140,7 +143,7 @@ export default function AttentionControl({ difficulty, streak = 0, variant, onCo
     const animate = () => {
       const now = performance.now();
       const rampT = Math.min(1, (now - trackingStartedAt) / MOTION_RAMP_MS);
-      const motionScale = easeInQuad(rampT);
+      const motionScale = smoothstep01(rampT);
 
       const current = dotsRef.current;
 
@@ -224,7 +227,7 @@ export default function AttentionControl({ difficulty, streak = 0, variant, onCo
         setPhase("select");
         setRoundStartTime(performance.now());
       }, config.trackingDurationMs);
-    }, 2000);
+    }, HIGHLIGHT_MS);
   }, [config, isColorMode, isFlashMode, difficulty, clearAllTimers, addTimer, startAnimation]);
 
   useEffect(() => {
@@ -372,17 +375,17 @@ export default function AttentionControl({ difficulty, streak = 0, variant, onCo
               disabled={phase !== "select"}
               className={`absolute rounded-full ${getDotColor(dot)} ${
                 phase === "select" ? "cursor-pointer z-10" : "cursor-default"
-              } ${
-                showTargetRing
-                  ? "ring-2 ring-accent ring-offset-2 ring-offset-surface z-[1] [transform:translateZ(0)]"
-                  : ""
-              }`}
+              } ${showTargetRing ? "z-[1] [transform:translateZ(0)]" : ""}`}
               style={{
                 width: DOT_RADIUS * 2,
                 height: DOT_RADIUS * 2,
                 left: dot.x - DOT_RADIUS,
                 top: dot.y - DOT_RADIUS,
-                transition: phase === "select" || phase === "feedback" ? "background-color 0.2s" : "none",
+                boxShadow: showTargetRing ? "inset 0 0 0 3px rgb(34 211 238)" : undefined,
+                transition:
+                  phase === "select" || phase === "feedback"
+                    ? "background-color 0.2s, box-shadow 0.2s"
+                    : "background-color 0.45s ease, box-shadow 0.35s ease",
                 padding: phase === "select" ? 8 : 0,
                 margin: phase === "select" ? -8 : 0,
               }}

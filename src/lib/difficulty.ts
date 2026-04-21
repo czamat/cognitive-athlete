@@ -36,7 +36,7 @@ export function getProcessingSpeedChoiceLimitMs(difficulty: number, streak: numb
 
 export function getAttentionSelectLimitMs(difficulty: number, streak: number = 0): number {
   const d = getEffectiveDifficulty(difficulty, streak);
-  return Math.max(7000, 24000 - Math.round(d * 1100));
+  return Math.max(8500, 26000 - Math.round(d * 1000));
 }
 
 export function getMemoryDualTaskLimitMs(difficulty: number, streak: number = 0): number {
@@ -79,18 +79,17 @@ export interface AttentionConfig {
 
 export function getAttentionConfig(difficulty: number, streak: number = 0): AttentionConfig {
   const d = applyStreakBonus(difficulty, streak);
-  // Higher baseline speed & crowd; scales with saved difficulty (1–10) + streak bonus (see applyStreakBonus).
-  // Cap total dots so the arena stays playable at ~320px.
-  const totalDots = Math.min(22, 9 + Math.floor(d * 1.35));
+  // Softer baseline: fewer distractors, slower motion, longer track time; still scales with d + streak.
+  const totalDots = Math.min(18, 7 + Math.floor(d * 1.05));
   const targetDots = Math.min(
-    Math.max(2, totalDots - 4),
-    2 + Math.floor(d * 0.4)
+    Math.max(2, totalDots - 5),
+    2 + Math.floor(d * 0.32)
   );
   return {
     totalDots,
     targetDots,
-    movementSpeed: 2.25 + d * 0.72,
-    trackingDurationMs: 3200 + Math.round(d * 280),
+    movementSpeed: 1.2 + d * 0.48,
+    trackingDurationMs: 3800 + Math.round(d * 340),
   };
 }
 
